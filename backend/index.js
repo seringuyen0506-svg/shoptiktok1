@@ -147,6 +147,29 @@ function writeHistory(arr) {
   fs.writeFileSync(HISTORY_PATH, JSON.stringify(arr, null, 2), 'utf-8');
 }
 
+// ===== CAPTCHA single-flight state per page =====
+const pageCaptchaState = new WeakMap(); // page -> { state: 'NONE'|'SEEN'|'SOLVING'|'SOLVED'|'FAILED', lastAt: number }
+
+// Small debounce helper
+function debounceWait(ms = 350) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Wait for any of the selectors with short per-selector timeout
+async function waitForAnySelector(page, selectors, totalTimeout = 6000) {
+  const per = Math.max(500, Math.floor(totalTimeout / Math.max(1, selectors.length)));
+  for (const sel of selectors) {
+    try {
+      const el = await page.waitForSelector(sel, { timeout: per, visible: true });
+      if (el) {
+        console.log('✓ Found selector:', sel);
+        return el;
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
 function normalizeUrl(url) {
   try {
     const u = new URL(url);
@@ -400,9 +423,44 @@ async function advancedDOMExtraction(page) {
   }
 }
 
-// ===== CAPTCHA SOLVER FUNCTION =====
+// ===== CAPTCHA DETECTION + SOLVER =====
+async function detectCaptchaType(page) {
+  // Debounce to stabilize DOM
+  await debounceWait(350);
+  const info = await page.evaluate(() => {
+    const lower = (s) => (s || '').toLowerCase();
+    const bodyText = lower(document.body.innerText || '');
+    const hasCaptchaWord = /captcha|verify|slide to verify|select 2 objects|rotate/i.test(bodyText);
+    const iframes = Array.from(document.querySelectorAll('iframe'))
+      .map(f => (f.src || '').toLowerCase())
+      .filter(u => u.includes('captcha') || u.includes('verify'));
+    let type = 'NONE';
+    if (hasCaptchaWord || iframes.length) {
+      if (/select 2 objects|same shape/i.test(bodyText)) type = 'TIKTOK_OBJ';
+      else if (/rotate/i.test(bodyText)) type = 'TIKTOK_ROTATE';
+      else type = 'ALL_CAPTCHA_SLIDE';
+    }
+    return { type, iframesCount: iframes.length, textSeen: hasCaptchaWord };
+  });
+  return info.type;
+}
+
 async function solveCaptchaIfNeeded(page, apiKey) {
   try {
+    // Single-flight guard
+    const st = pageCaptchaState.get(page) || { state: 'NONE', lastAt: Date.now() };
+    if (st.state === 'SOLVING') {
+      console.log('⏳ CAPTCHA solving in progress, skip duplicate');
+      return { success: false, error: 'solving_in_progress' };
+    }
+    // Detect type first
+    const detected = await detectCaptchaType(page);
+    if (detected === 'NONE') {
+      pageCaptchaState.set(page, { state: 'NONE', lastAt: Date.now() });
+      return { success: true, noop: true };
+    }
+    pageCaptchaState.set(page, { state: 'SEEN', lastAt: Date.now() });
+
     // 1. Locate CAPTCHA region robustly (main page, iframes, canvas, or text container)
     console.log('📸 Capturing CAPTCHA screenshot...');
     let captchaElement = await page.$('img[src*="captcha"], img[alt*="captcha"], [class*="captcha"] canvas, canvas[class*="captcha"], [class*="captcha"]').catch(() => null);
@@ -476,20 +534,12 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       console.log('✓ Screenshot captured (full page fallback)');
     }
     
-    // 2. Detect captcha type
-    const pageText = await page.evaluate(() => document.body.innerText);
-    let captchaType = 'ALL_CAPTCHA_SLIDE'; // Default
-    
-    if (pageText.includes('Select 2 objects') || pageText.includes('Chọn 2 đối tượng') || 
-        pageText.includes('same shape')) {
-      captchaType = 'TIKTOK_OBJ';
-    } else if (pageText.includes('Rotate') || pageText.includes('Xoay') || pageText.includes('rotate')) {
+    // 2. Decide captcha type from detection + UA
+    let captchaType = 'ALL_CAPTCHA_SLIDE';
+    if (detected === 'TIKTOK_OBJ') captchaType = 'TIKTOK_OBJ';
+    else if (detected === 'TIKTOK_ROTATE') {
       const userAgent = await page.evaluate(() => navigator.userAgent);
-      if (userAgent.includes('TikTok')) {
-        captchaType = 'TIKTOK_ROTATE_APP';
-      } else {
-        captchaType = 'TIKTOK_ROTATE_WEB';
-      }
+      captchaType = userAgent.includes('TikTok') ? 'TIKTOK_ROTATE_APP' : 'TIKTOK_ROTATE_WEB';
     }
     
     console.log(`🎯 Detected CAPTCHA type: ${captchaType}`);
@@ -513,42 +563,68 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       }
     }
     
-    // 4. Send to hmcaptcha
+    // 4. Send to hmcaptcha with retries and optional polling
     console.log('📤 Sending to hmcaptcha.com...');
-    const response = await axios.post('https://hmcaptcha.com/Recognition?wait=1', payload, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 60000
-    });
-    
-    console.log('hmcaptcha response:', response.data);
-    
-    // 5. Check response - THEO TÀI LIỆU CHÍNH THỨC
-    // Case 1: Code !== 0 → API error (invalid key, wrong format, etc.)
-    if (response.data.Code !== 0) {
-      return {
-        success: false,
-        error: response.data.Message || `API Error: Code ${response.data.Code}`
-      };
+    pageCaptchaState.set(page, { state: 'SOLVING', lastAt: Date.now() });
+    const maxAttempts = 3;
+    let lastErr = null;
+    let resultData = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const resp = await axios.post('https://hmcaptcha.com/Recognition?wait=1', payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 60000
+        });
+        console.log(`hmcaptcha response (attempt ${attempt}):`, resp.data);
+
+        if (resp.data.Code !== 0) {
+          throw new Error(resp.data.Message || `API Error: Code ${resp.data.Code}`);
+        }
+        if (resp.data.Status === 'ERROR') {
+          throw new Error(resp.data.Message || 'Solver returned ERROR status');
+        }
+        if (resp.data.Status === 'SUCCESS' && resp.data.Data) {
+          resultData = resp.data.Data;
+          break;
+        }
+        // If PENDING/PROCESSING unexpectedly, poll getResult up to 12s
+        const taskId = resp.data.TaskId;
+        if (taskId) {
+          const deadline = Date.now() + 12000;
+          while (Date.now() < deadline) {
+            const r = await axios.get(`https://hmcaptcha.com/getResult?apikey=${encodeURIComponent(payload.Apikey)}&taskid=${encodeURIComponent(taskId)}`, { timeout: 15000 });
+            console.log('getResult:', r.data);
+            if (r.data.Status === 'SUCCESS' && r.data.Data) {
+              resultData = r.data.Data;
+              break;
+            }
+            if (r.data.Status === 'ERROR') throw new Error(r.data.Message || 'Solver ERROR on getResult');
+            await new Promise(res => setTimeout(res, 800 + Math.random() * 700));
+          }
+          if (resultData) break;
+        }
+        lastErr = new Error('Unexpected solver state without Data');
+      } catch (e) {
+        lastErr = e;
+        const backoff = 600 + Math.floor(Math.random() * 900);
+        console.log(`⚠️ Solver attempt ${attempt} failed: ${e.message}. Retrying in ${backoff}ms...`);
+        await new Promise(r => setTimeout(r, backoff));
+        // Re-capture if attempt > 1 (image might rotate/change)
+        if (attempt < maxAttempts) {
+          try {
+            const rec = await page.screenshot({ encoding: 'base64', clip: captchaClip || undefined, fullPage: !captchaClip });
+            payload.Image = rec;
+          } catch { /* ignore */ }
+        }
+      }
     }
-    
-    // Case 2: Code === 0 BUT Status === 'ERROR' → Solver failed
-    if (response.data.Status === 'ERROR') {
-      return {
-        success: false,
-        error: response.data.Message || 'Solver returned ERROR status'
-      };
+    if (!resultData) {
+      pageCaptchaState.set(page, { state: 'FAILED', lastAt: Date.now() });
+      return { success: false, error: lastErr ? lastErr.message : 'Solver failed without data' };
     }
-    
-    // Case 3: Code === 0 BUT Status === 'PENDING' or 'PROCESSING' (shouldn't happen with wait=1)
-    if (response.data.Status !== 'SUCCESS') {
-      return {
-        success: false,
-        error: `Unexpected status: ${response.data.Status}`
-      };
-    }
-    
-    const resultData = response.data.Data;
+
     console.log('✅ CAPTCHA solved:', resultData);
+    pageCaptchaState.set(page, { state: 'SOLVED', lastAt: Date.now() });
     
     // 6. Execute action based on type
     if (captchaType === 'ALL_CAPTCHA_SLIDE') {
@@ -632,6 +708,17 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       }
     }
     
+    // Validate resultData before declaring success
+    const valid = (
+      (captchaType === 'ALL_CAPTCHA_SLIDE' && (typeof resultData.offset === 'number')) ||
+      (captchaType === 'TIKTOK_OBJ' && typeof resultData.raw === 'string' && resultData.raw.includes(',')) ||
+      ((captchaType === 'TIKTOK_ROTATE_APP' || captchaType === 'TIKTOK_ROTATE_WEB') && typeof resultData.angle === 'number')
+    );
+    if (!valid) {
+      pageCaptchaState.set(page, { state: 'FAILED', lastAt: Date.now() });
+      return { success: false, error: 'Invalid solver data' };
+    }
+
     console.log('✅ Action executed successfully');
     return { success: true, captchaType, data: resultData };
     
@@ -1161,47 +1248,10 @@ app.post('/api/crawl', async (req, res) => {
         console.log('Waiting for page to fully load...');
         await randomDelay(1000, 2000);
         
-        // ⚠️ CHECK CAPTCHA NGAY SAU KHI LOAD TRANG
-        console.log('🔍 Checking for CAPTCHA...');
-        const hasCaptcha = await page.evaluate(() => {
-          // Check nhiều pattern CAPTCHA của TikTok
-          const captchaSelectors = [
-            'img[src*="captcha"]',
-            'img[alt*="captcha"]',
-            '[class*="captcha"]',
-            '[id*="captcha"]',
-            'div[class*="verify"]',
-            'div[class*="Verify"]'
-          ];
-          
-          for (const selector of captchaSelectors) {
-            const el = document.querySelector(selector);
-            if (el) {
-              return {
-                found: true,
-                selector: selector,
-                visible: el.offsetParent !== null
-              };
-            }
-          }
-          
-          // Check text content
-          const bodyText = document.body.innerText.toLowerCase();
-          if (bodyText.includes('verify') || bodyText.includes('captcha') || 
-              bodyText.includes('slide') || bodyText.includes('select')) {
-            return {
-              found: true,
-              selector: 'text',
-              visible: true
-            };
-          }
-          
-          return { found: false };
-        });
-        
-        // NẾU CÓ CAPTCHA → GIẢI NGAY
-        if (hasCaptcha.found) {
-          console.log('⚠️ CAPTCHA detected:', hasCaptcha.selector);
+        // ⚠️ CHECK CAPTCHA NGAY SAU KHI LOAD TRANG (ENUM)
+        const detectedType = await detectCaptchaType(page);
+        if (detectedType !== 'NONE') {
+          console.log('⚠️ CAPTCHA detected of type:', detectedType);
           if (!apiKey) {
             console.log('❌ No API key provided - cannot solve CAPTCHA');
             results.push({
@@ -1278,7 +1328,15 @@ app.post('/api/crawl', async (req, res) => {
         // Chờ selector xuất hiện (tối đa 15s)
         let foundSelectors = false;
         try {
-          await page.waitForSelector('span[class*="Semibold"], [data-e2e*="pdp"], h1', { timeout: 15000 });
+          // Use fallback selectors with short timeouts
+          const titleEl = await waitForAnySelector(page, [
+            '[data-e2e="product-title"]',
+            'h1[role="heading"]',
+            'h1[class*="title"]',
+            'span[class*="Semibold"]',
+            'h1'
+          ], 8000);
+          if (!titleEl) throw new Error('title selector not found');
           console.log('✓ Found selectors on page');
           foundSelectors = true;
         } catch (e) {

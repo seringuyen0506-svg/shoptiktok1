@@ -8,13 +8,14 @@
     "productSold": "1",
     "note": "",
     "createdAt": "2025-10-20T15:27:54.537Z",
-    "updatedAt": "2025-10-20T15:27:54.537Z",
+    "updatedAt": "2025-10-20T17:04:40.956Z",
     "snapshots": [
       {
         "date": "2025-10-20",
         "shopSold": "100",
         "productSold": "1",
-        "createdAt": "2025-10-20T15:27:54.537Z"
+        "createdAt": "2025-10-20T15:27:54.537Z",
+        "updatedAt": "2025-10-20T17:04:40.956Z"
       }
     ]
   },
@@ -27,13 +28,14 @@
     "productSold": "",
     "note": "",
     "createdAt": "2025-10-20T15:28:33.448Z",
-    "updatedAt": "2025-10-20T15:28:33.448Z",
+    "updatedAt": "2025-10-20T17:05:17.660Z",
     "snapshots": [
       {
         "date": "2025-10-20",
         "shopSold": "100",
         "productSold": null,
-        "createdAt": "2025-10-20T15:28:33.448Z"
+        "createdAt": "2025-10-20T15:28:33.448Z",
+        "updatedAt": "2025-10-20T17:05:17.660Z"
       }
     ]
   },
@@ -41,18 +43,19 @@
     "id": "h_1760974136227_zxglp7",
     "url": "https://vm.tiktok.com/ZTHnh5wkoc3nm-1TV7O/",
     "shopName": "N/A (Geo-blocked)",
-    "productName": "N/A (Geo-blocked - Error 23002102)",
+    "productName": "Unknown",
     "shopSold": "N/A (Geo-blocked)",
     "productSold": "N/A (Geo-blocked)",
     "note": "",
     "createdAt": "2025-10-20T15:28:56.227Z",
-    "updatedAt": "2025-10-20T15:28:56.227Z",
+    "updatedAt": "2025-10-20T17:05:24.344Z",
     "snapshots": [
       {
         "date": "2025-10-20",
         "shopSold": null,
         "productSold": null,
-        "createdAt": "2025-10-20T15:28:56.227Z"
+        "createdAt": "2025-10-20T15:28:56.227Z",
+        "updatedAt": "2025-10-20T17:05:24.344Z"
       }
     ]
   }
