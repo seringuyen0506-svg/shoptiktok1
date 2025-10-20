@@ -1,0 +1,27 @@
+{
+  "proxy": {
+    "host": "p.webshare.io",
+    "port": "80",
+    "username": "ppuozozl-rotate",
+    "password": "c8iqnclktjv9"
+  },
+  "captcha": {
+    "enabled": true,
+    "provider": "2captcha",
+    "apiKey": ""
+  },
+  "crawler": {
+    "timeout": 60000,
+    "headless": false,
+    "batchSize": 3,
+    "screenshotOnError": true,
+    "retryFailed": false,
+    "maxRetries": 1
+  },
+  "output": {
+    "exportJSON": true,
+    "exportCSV": true,
+    "exportExcel": false,
+    "saveScreenshots": true
+  }
+}
