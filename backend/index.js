@@ -568,10 +568,26 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       const { raw } = resultData;
       console.log(`🎯 Clicking 2 objects: ${raw}`);
       const bbox = captchaClip || (await (captchaElement ? captchaElement.boundingBox() : null));
-      for (const point of raw.split('|')) {
+      
+      if (!bbox || !bbox.width || !bbox.height) {
+        console.error('❌ No valid bounding box for TIKTOK_OBJ');
+        return { success: false, error: 'Invalid bbox for object selection' };
+      }
+      
+      // Parse raw coordinates: "0.61413,0.62064|0.48913,0.819767"
+      // xRatio,yRatio|xRatio,yRatio...
+      const points = raw.split('|');
+      console.log(`  → Found ${points.length} points to click`);
+      
+      for (const point of points) {
         const [xRatio, yRatio] = point.split(',').map(parseFloat);
+        
+        // ⚠️ FIX: Dùng xRatio cho X, yRatio cho Y (KHÔNG phải xRatio cho cả hai!)
+        // Theo docs: x = xn * image.renderWidth, y = yn * image.renderHeight
         const clickX = bbox.x + (xRatio * bbox.width);
-        const clickY = bbox.y + (yRatio * bbox.height);
+        const clickY = bbox.y + (yRatio * bbox.height);  // ← yn, không phải xn!
+        
+        console.log(`  → Click at (${clickX.toFixed(1)}, ${clickY.toFixed(1)}) from ratio (${xRatio}, ${yRatio})`);
         
         await page.mouse.click(clickX, clickY);
         await new Promise(r => setTimeout(r, 500));
