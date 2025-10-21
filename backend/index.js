@@ -16,15 +16,27 @@ const app = express();
 // Trust proxy for Cloudflare Tunnel
 app.set('trust proxy', 1);
 
-// CORS configuration for Cloudflare Tunnel
+// CORS configuration for Cloudflare Tunnel + Vercel + custom origins via env
+// Use dynamic origin callback to echo allowed origins (needed when credentials=true)
+const allowedOriginPatterns = [
+  /\.trycloudflare\.com$/i,
+  /\.vercel\.app$/i,
+  /^http:\/\/localhost:\d+$/i,
+  /^http:\/\/127\.0\.0\.1:\d+$/i
+];
+
+const envAllow = (process.env.ALLOW_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
 app.use(cors({
-  origin: [
-    /\.trycloudflare\.com$/,           // Allow all trycloudflare.com subdomains
-    'http://localhost:3000',            // Allow local development
-    'http://localhost:5000',            // Allow local development
-    /^http:\/\/localhost:\d+$/          // Allow any localhost port
-  ],
-  credentials: true,                    // Allow cookies
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // same-origin or curl
+    const ok = allowedOriginPatterns.some(r => r.test(origin)) || envAllow.includes(origin);
+    return callback(ok ? null : new Error('Not allowed by CORS'), ok);
+  },
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -2029,7 +2041,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Backend running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);

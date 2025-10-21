@@ -1,7 +1,11 @@
 node_modules
 npm-debug.log
-backend/data/*
+*.log
 *.png
 *.jpg
 *.jpeg
 *.gif
+html_log.txt
+screenshot_debug.png
+data/*.csv
+../frontend
