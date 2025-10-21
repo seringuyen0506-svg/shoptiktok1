@@ -7,6 +7,8 @@ services:
       - PORT=8080
       # Set this to your public domain if you plan to access backend directly from other origins
       - ALLOW_ORIGINS=${ALLOW_ORIGINS}
+    volumes:
+      - backend-data:/app/backend/data
     expose:
       - "8080"
     ports:
@@ -29,3 +31,6 @@ services:
 networks:
   default:
     name: tiktokshop_net
+
+volumes:
+  backend-data:
