@@ -1,5 +1,5 @@
 Param(
-  [Parameter(Mandatory=$true)] [string]$Host,
+  [Parameter(Mandatory=$true)] [string]$VpsHost,
   [Parameter(Mandatory=$true)] [string]$Domain,
   [Parameter(Mandatory=$true)] [string]$Email,
   [string]$RepoUrl = "https://github.com/seringuyen0506-svg/shoptiktok1.git",
@@ -7,13 +7,13 @@ Param(
 )
 
 # Purpose: One-shot deploy to a Docker-capable VPS with Let's Encrypt SSL
-# Usage: ./scripts/deploy-vps.ps1 -Host 148.230.100.21 -Domain ttshoptool.fun -Email seringuyen0506@gmail.com
+# Usage: ./scripts/deploy-vps.ps1 -VpsHost 148.230.100.21 -Domain ttshoptool.fun -Email seringuyen0506@gmail.com
 
 $ErrorActionPreference = 'Stop'
 
 function Invoke-SSH {
   param([string]$Cmd)
-  ssh "root@$Host" $Cmd
+  ssh "root@$VpsHost" $Cmd
 }
 
 Write-Host "==> Ensuring docker-compose volumes and webroot on host..." -ForegroundColor Cyan
