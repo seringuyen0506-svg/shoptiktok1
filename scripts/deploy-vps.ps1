@@ -19,6 +19,12 @@ function Invoke-SSH {
 Write-Host "==> Ensuring docker-compose volumes and webroot on host..." -ForegroundColor Cyan
 Invoke-SSH "mkdir -p /opt/tiktokshop && mkdir -p /opt/certbot-webroot/.well-known/acme-challenge" | Out-Null
 
+Write-Host "==> Installing prerequisites (Docker, Compose, Git) if missing..." -ForegroundColor Cyan
+Invoke-SSH "sh -lc 'if ! command -v docker >/dev/null 2>&1; then apt-get update -y && apt-get install -y docker.io docker-compose-plugin git && systemctl enable --now docker; fi'"
+
+Write-Host "==> (Optional) Open firewall ports 80/443 if UFW is active..." -ForegroundColor Cyan
+Invoke-SSH "sh -lc 'if command -v ufw >/dev/null 2>&1; then ufw status | grep -q active && (ufw allow 80/tcp; ufw allow 443/tcp) || true; fi'"
+
 Write-Host "==> Cloning or pulling repo..." -ForegroundColor Cyan
 Invoke-SSH "cd /opt/tiktokshop && if [ ! -d .git ]; then git clone $RepoUrl .; else git fetch --all && git reset --hard origin/$Branch; fi && git checkout $Branch"
 
