@@ -28,6 +28,7 @@ function App() {
   const [hoveredResultIndex, setHoveredResultIndex] = useState(null); // show copy on hover in results
   const [hoveredHistoryId, setHoveredHistoryId] = useState(null); // show copy on hover in history
   const [groupByShop, setGroupByShop] = useState(false); // group history by shop
+  const [collapsedGroups, setCollapsedGroups] = useState({}); // key:boolean collapsed
   const shopCounts = useMemo(() => {
     const counts = {};
     for (const it of history) {
@@ -64,6 +65,11 @@ function App() {
       setGroupByShop(true);
       localStorage.setItem('historyGroupByShop', '1');
     }
+    // load collapsed groups state
+    try {
+      const raw = localStorage.getItem('collapsedGroups');
+      if (raw) setCollapsedGroups(JSON.parse(raw));
+    } catch {}
   }, []);
 
   const handleSaveProxy = () => {
@@ -80,6 +86,28 @@ function App() {
     const urls = items.map(i => i.url);
     if (urls.length === 0) return;
     await handleCrawl(urls);
+  };
+
+  const setGroupCollapsed = (key, val) => {
+    setCollapsedGroups(prev => {
+      const next = { ...prev, [key]: val };
+      try { localStorage.setItem('collapsedGroups', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const collapseAllGroups = (keys) => {
+    const next = {};
+    for (const k of keys) next[k] = true;
+    setCollapsedGroups(next);
+    try { localStorage.setItem('collapsedGroups', JSON.stringify(next)); } catch {}
+  };
+
+  const expandAllGroups = (keys) => {
+    const next = {};
+    for (const k of keys) next[k] = false;
+    setCollapsedGroups(next);
+    try { localStorage.setItem('collapsedGroups', JSON.stringify(next)); } catch {}
   };
 
   const handleDeleteGroup = async (items) => {
@@ -1103,12 +1131,18 @@ function App() {
     React.createElement('div', { key: 'hist', style: { marginTop: 20, background: 'rgba(255,255,255,0.7)', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.1)' } }, [
       React.createElement('div', { key: 'hist-head', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 } }, [
         React.createElement('h3', { key: 'h3', style: { margin: 0, fontSize: 20, fontWeight: 700, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } }, '🗂️ Lịch sử'),
-        React.createElement('label', { key: 'group-toggle', style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' } }, [
-          React.createElement('input', { key: 'cb', type: 'checkbox', checked: groupByShop, onChange: e => handleToggleGroupByShop(e.target.checked) }),
-          React.createElement('span', { key: 'lbl' }, 'Gộp theo Shop')
+        React.createElement('div', { key: 'right-controls', style: { display: 'flex', alignItems: 'center', gap: 12 } }, [
+          React.createElement('label', { key: 'selall', style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' } }, [
+            React.createElement('input', { type: 'checkbox', checked: history.length > 0 && selectedIds.length === history.length, onChange: toggleSelectAll }),
+            React.createElement('span', null, 'Chọn tất cả')
+          ]),
+          React.createElement('label', { key: 'group-toggle', style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' } }, [
+            React.createElement('input', { key: 'cb', type: 'checkbox', checked: groupByShop, onChange: e => handleToggleGroupByShop(e.target.checked) }),
+            React.createElement('span', { key: 'lbl' }, 'Gộp theo Shop')
+          ])
         ])
       ]),
-      !groupByShop && selectedIds.length > 0 && React.createElement('div', { key: 'bulkbar', style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', border: '1px solid #e5e7eb' } }, [
+      selectedIds.length > 0 && React.createElement('div', { key: 'bulkbar', style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', border: '1px solid #e5e7eb' } }, [
         React.createElement('span', { key: 'selcount', style: { fontWeight: 600, color: '#374151' } }, `${selectedIds.length} mục đã chọn`),
         React.createElement(Button, { key: 'bulkRecrawl', variant: 'secondary', onClick: handleBulkRecrawl }, '↻ Crawl lại đã chọn'),
         React.createElement(Button, { key: 'bulkDelete', variant: 'secondary', onClick: handleBulkDelete, style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa đã chọn')
@@ -1165,22 +1199,41 @@ function App() {
             groups[key].items.push(it);
           }
           const groupArr = Object.values(groups).sort((a,b) => String(a.shopName).localeCompare(String(b.shopName)));
-          return React.createElement('div', { key: 'groups', style: { display: 'flex', flexDirection: 'column', gap: 16 } },
-            groupArr.map((g, gi) => React.createElement('div', { key: g.key || gi, style: { border: '1px solid #e5e7eb', borderRadius: 12, background: 'white', overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.06)' } }, [
+          const groupKeys = groupArr.map(g => g.key);
+          return React.createElement('div', { key: 'groups', style: { display: 'flex', flexDirection: 'column', gap: 16 } }, [
+            React.createElement('div', { key: 'toggles', style: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 8 } }, [
+              React.createElement(Button, { key: 'collapseAll', variant: 'secondary', onClick: () => collapseAllGroups(groupKeys) }, 'Thu gọn tất cả'),
+              React.createElement(Button, { key: 'expandAll', variant: 'secondary', onClick: () => expandAllGroups(groupKeys) }, 'Mở rộng tất cả')
+            ]),
+            ...groupArr.map((g, gi) => React.createElement('div', { key: g.key || gi, style: { border: '1px solid #e5e7eb', borderRadius: 12, background: 'white', overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.06)' } }, [
               React.createElement('div', { key: 'hdr', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', borderBottom: '1px solid #e5e7eb' } }, [
-                React.createElement('div', { key: 'title', style: { display: 'flex', alignItems: 'baseline', gap: 10 } }, [
-                  React.createElement('span', { key: 'name', style: { fontWeight: 700, color: '#111827' } }, g.shopName),
-                  React.createElement('span', { key: 'cnt', style: { fontSize: 12, color: '#6b7280' } }, `(${g.items.length} sản phẩm)`) 
+                React.createElement('div', { key: 'left', style: { display: 'flex', alignItems: 'center', gap: 10 } }, [
+                  React.createElement('button', { key: 'toggle', onClick: () => setGroupCollapsed(g.key, !collapsedGroups[g.key]), title: collapsedGroups[g.key] ? 'Mở rộng' : 'Thu gọn', style: { border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8, width: 28, height: 28, cursor: 'pointer' } }, collapsedGroups[g.key] ? '▶' : '▼'),
+                  React.createElement('input', { key: 'selgrp', type: 'checkbox', checked: g.items.every(it => selectedIds.includes(it.id)), onChange: (e) => {
+                    const allIds = g.items.map(it => it.id);
+                    if (e.target.checked) {
+                      setSelectedIds(prev => Array.from(new Set([...prev, ...allIds])));
+                    } else {
+                      setSelectedIds(prev => prev.filter(id => !allIds.includes(id)));
+                    }
+                  } }),
+                  React.createElement('div', { key: 'title', style: { display: 'flex', alignItems: 'baseline', gap: 10 } }, [
+                    React.createElement('span', { key: 'name', style: { fontWeight: 700, color: '#111827' } }, g.shopName),
+                    React.createElement('span', { key: 'cnt', style: { fontSize: 12, color: '#6b7280' } }, `(${g.items.length} sản phẩm)`) 
+                  ])
                 ]),
                 React.createElement('div', { key: 'actions', style: { display: 'flex', gap: 8 } }, [
                   React.createElement(Button, { key: 'recg', variant: 'secondary', onClick: () => handleRecrawlGroup(g.items) }, '↻ Crawl cả nhóm'),
                   React.createElement(Button, { key: 'delg', variant: 'secondary', onClick: () => handleDeleteGroup(g.items), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa nhóm')
                 ])
               ]),
-              React.createElement('div', { key: 'list', style: { overflowX: 'auto' } },
+              !collapsedGroups[g.key] && React.createElement('div', { key: 'list', style: { overflowX: 'auto' } },
                 React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0 } }, [
-                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, ['Link','Sản phẩm','Đã bán (SP)','Note','Hành động'].map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: '#f9fafb', color: '#374151', padding: 12, textAlign: 'left', fontSize: 13, borderBottom: '1px solid #e5e7eb' } }, h)))),
+                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, ['Chọn','Link','Sản phẩm','Đã bán (SP)','Note','Hành động'].map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: '#f9fafb', color: '#374151', padding: 12, textAlign: 'left', fontSize: 13, borderBottom: '1px solid #e5e7eb' } }, h)))),
                   React.createElement('tbody', { key: 'tb' }, g.items.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { borderBottom: '1px solid #f3f4f6' } }, [
+                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } },
+                      React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
+                    ),
                     React.createElement('td', { style: { position: 'relative', padding: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#2563eb' },
                       onMouseEnter: () => setHoveredHistoryId(it.id),
                       onMouseLeave: () => setHoveredHistoryId(null)
@@ -1208,7 +1261,7 @@ function App() {
                   ])))
                 ]))
             ]))
-          );
+          ]);
         })()
       )
     ])
