@@ -1,4 +1,4 @@
-const { useState, useEffect } = React;
+const { useState, useEffect, useMemo } = React;
 
 function App() {
   const [links, setLinks] = useState('');
@@ -25,6 +25,17 @@ function App() {
   const [checkingApiKey, setCheckingApiKey] = useState(false);
   const [concurrency, setConcurrency] = useState(2);
   const [asyncMode, setAsyncMode] = useState(false); // chống 524 qua Cloudflare Tunnel
+  const [hoveredResultIndex, setHoveredResultIndex] = useState(null); // show copy on hover in results
+  const [hoveredHistoryId, setHoveredHistoryId] = useState(null); // show copy on hover in history
+  const [groupByShop, setGroupByShop] = useState(false); // group history by shop
+  const shopCounts = useMemo(() => {
+    const counts = {};
+    for (const it of history) {
+      const key = it.shopId || it.shopSlug || it.shopName || 'unknown';
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }, [history]);
   
   // Progress tracking states
   const [progress, setProgress] = useState({
@@ -45,11 +56,39 @@ function App() {
     const savedAsync = localStorage.getItem('crawlAsyncMode');
     const isTunnel = typeof location !== 'undefined' && /trycloudflare\.com$/i.test(location.hostname);
     setAsyncMode(savedAsync ? savedAsync === '1' : isTunnel); // auto enable on tunnel
+    const savedGroup = localStorage.getItem('historyGroupByShop');
+    if (savedGroup) {
+      setGroupByShop(savedGroup === '1');
+    } else {
+      // default ON for better manageability if user hasn't chosen yet
+      setGroupByShop(true);
+      localStorage.setItem('historyGroupByShop', '1');
+    }
   }, []);
 
   const handleSaveProxy = () => {
     localStorage.setItem('tiktokProxy', proxy);
     alert('✅ Proxy đã được lưu!');
+  };
+
+  const handleToggleGroupByShop = (on) => {
+    setGroupByShop(on);
+    localStorage.setItem('historyGroupByShop', on ? '1' : '0');
+  };
+
+  const handleRecrawlGroup = async (items) => {
+    const urls = items.map(i => i.url);
+    if (urls.length === 0) return;
+    await handleCrawl(urls);
+  };
+
+  const handleDeleteGroup = async (items) => {
+    if (!items || items.length === 0) return;
+    if (!confirm(`Xóa tất cả ${items.length} mục trong nhóm này?`)) return;
+    for (const it of items) {
+      try { await fetch(`/api/history/${it.id}`, { method: 'DELETE', credentials: 'include' }); } catch {}
+    }
+    await loadHistory();
   };
 
   const handleSaveApiKey = () => {
@@ -416,6 +455,70 @@ function App() {
       }
     }, disabled && variant === 'primary' ? React.createElement('span', { className: 'spinner', style: { marginRight: '8px' } }) : null, children);
   };
+
+  // ===== Stats (Charts) =====
+  const topShops = useMemo(() => {
+    // compute top 10 shops by count
+    const byShop = {};
+    for (const it of history) {
+      const key = it.shopId || it.shopSlug || it.shopName || 'Unknown Shop';
+      if (!byShop[key]) byShop[key] = { name: it.shopName || it.shopSlug || 'Unknown Shop', count: 0 };
+      byShop[key].count++;
+    }
+    return Object.values(byShop).sort((a,b) => b.count - a.count).slice(0, 10);
+  }, [history]);
+
+  const statusDist = useMemo(() => {
+    // derive status buckets from results+history recent view
+    const buckets = { success: 0, cheerio: 0, geo: 0, error: 0 };
+    const consider = Array.isArray(results) && results.length > 0 ? results : history;
+    for (const it of consider) {
+      const s = (it.status || '').toLowerCase();
+      if (s.startsWith('success')) buckets.success++;
+      else if (s.includes('cheerio')) buckets.cheerio++;
+      else if (s.includes('geo')) buckets.geo++;
+      else buckets.error++;
+    }
+    return buckets;
+  }, [results, history]);
+
+  useEffect(() => {
+    // render charts when data changes; Chart.js loaded via index.html
+    if (typeof Chart === 'undefined') return;
+    // Top shops chart
+    const ctx1 = document.getElementById('chart-topshops');
+    if (ctx1) {
+      if (ctx1._chart) ctx1._chart.destroy();
+      ctx1._chart = new Chart(ctx1, {
+        type: 'bar',
+        data: {
+          labels: topShops.map(s => s.name),
+          datasets: [{
+            label: 'Số sản phẩm',
+            data: topShops.map(s => s.count),
+            backgroundColor: 'rgba(102, 126, 234, 0.6)'
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      });
+    }
+    // Status distribution chart
+    const ctx2 = document.getElementById('chart-status');
+    if (ctx2) {
+      if (ctx2._chart) ctx2._chart.destroy();
+      ctx2._chart = new Chart(ctx2, {
+        type: 'doughnut',
+        data: {
+          labels: ['Thành công', 'Cheerio', 'Geo-block', 'Lỗi/Khác'],
+          datasets: [{
+            data: [statusDist.success, statusDist.cheerio, statusDist.geo, statusDist.error],
+            backgroundColor: ['#34d399','#60a5fa','#fbbf24','#f87171']
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+    }
+  }, [topShops, statusDist]);
 
   const Input = ({ value, onChange, placeholder, type = 'text', style = {} }) => {
     return React.createElement('input', {
@@ -802,6 +905,22 @@ function App() {
       }, progress.message)
     ),
 
+    // Thống kê
+    React.createElement('div', { key: 'stats', style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 } }, [
+      React.createElement('div', { key: 'card1', style: { background: 'rgba(255,255,255,0.7)', borderRadius: 16, padding: 16, border: '1px solid rgba(255,255,255,0.2)', boxShadow: '0 8px 32px rgba(0,0,0,0.1)', minHeight: 260 } }, [
+        React.createElement('div', { key: 't', style: { fontWeight: 700, marginBottom: 8, color: '#374151' } }, 'Top Shop theo số sản phẩm'),
+        React.createElement('div', { key: 'c', style: { position: 'relative', width: '100%', height: 220 } },
+          React.createElement('canvas', { id: 'chart-topshops' })
+        )
+      ]),
+      React.createElement('div', { key: 'card2', style: { background: 'rgba(255,255,255,0.7)', borderRadius: 16, padding: 16, border: '1px solid rgba(255,255,255,0.2)', boxShadow: '0 8px 32px rgba(0,0,0,0.1)', minHeight: 260 } }, [
+        React.createElement('div', { key: 't', style: { fontWeight: 700, marginBottom: 8, color: '#374151' } }, 'Phân bố trạng thái gần đây'),
+        React.createElement('div', { key: 'c', style: { position: 'relative', width: '100%', height: 220 } },
+          React.createElement('canvas', { id: 'chart-status' })
+        )
+      ])
+    ]),
+
     // Note input + History controls
     React.createElement('div', { key: 'note-controls', style: { display: 'flex', gap: 12, marginBottom: 16 } }, [
       React.createElement(Input, { key: 'note', value: note, onChange: e => setNote(e.target.value), placeholder: 'Ghi chú cho lần crawl này (sẽ lưu kèm lịch sử)', style: { flex: 1 } }),
@@ -925,12 +1044,20 @@ function App() {
                     padding: '16px', 
                     fontSize: '13px',
                     color: '#666',
-                    maxWidth: '200px',
+                    maxWidth: '260px',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  } 
-                }, r.url),
+                    whiteSpace: 'nowrap',
+                    position: 'relative'
+                  },
+                  onMouseEnter: () => setHoveredResultIndex(i),
+                  onMouseLeave: () => setHoveredResultIndex(null)
+                }, [
+                  React.createElement('a', { key: 'a', href: r.url, target: '_blank', rel: 'noopener noreferrer', title: r.url, style: { color: '#2563eb', textDecoration: 'none', paddingRight: 28, display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'middle' } }, r.url),
+                  React.createElement('button', { key: 'copy', onClick: () => copyToClipboard(r.url, `res-${i}`), title: 'Copy link',
+                    style: { position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '2px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer', opacity: hoveredResultIndex === i ? 1 : 0, transition: 'opacity 0.15s ease' }
+                  }, copiedId === `res-${i}` ? '✅' : '📋')
+                ]),
                 React.createElement('td', { 
                   style: { 
                     padding: '16px', 
@@ -972,51 +1099,118 @@ function App() {
       )
     ),
 
-    // History Table
+    // History Table (with Group by Shop toggle)
     React.createElement('div', { key: 'hist', style: { marginTop: 20, background: 'rgba(255,255,255,0.7)', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.1)' } }, [
-      React.createElement('h3', { key: 'h3', style: { marginBottom: 12, fontSize: 20, fontWeight: 700, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } }, '🗂️ Lịch sử'),
-      selectedIds.length > 0 && React.createElement('div', { key: 'bulkbar', style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', border: '1px solid #e5e7eb' } }, [
+      React.createElement('div', { key: 'hist-head', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 } }, [
+        React.createElement('h3', { key: 'h3', style: { margin: 0, fontSize: 20, fontWeight: 700, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } }, '🗂️ Lịch sử'),
+        React.createElement('label', { key: 'group-toggle', style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' } }, [
+          React.createElement('input', { key: 'cb', type: 'checkbox', checked: groupByShop, onChange: e => handleToggleGroupByShop(e.target.checked) }),
+          React.createElement('span', { key: 'lbl' }, 'Gộp theo Shop')
+        ])
+      ]),
+      !groupByShop && selectedIds.length > 0 && React.createElement('div', { key: 'bulkbar', style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', border: '1px solid #e5e7eb' } }, [
         React.createElement('span', { key: 'selcount', style: { fontWeight: 600, color: '#374151' } }, `${selectedIds.length} mục đã chọn`),
         React.createElement(Button, { key: 'bulkRecrawl', variant: 'secondary', onClick: handleBulkRecrawl }, '↻ Crawl lại đã chọn'),
         React.createElement(Button, { key: 'bulkDelete', variant: 'secondary', onClick: handleBulkDelete, style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa đã chọn')
       ]),
-      React.createElement('div', { key: 'tbl', style: { overflowX: 'auto' } },
-        React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0, background: 'white', borderRadius: 12, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.08)' } }, [
-          React.createElement('thead', { key: 'th' }, React.createElement('tr', null, [
-            React.createElement('th', { key: 'sel-h', style: { width: 42, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: '#fff', padding: 14, textAlign: 'center' } },
-              React.createElement('input', { type: 'checkbox', checked: history.length > 0 && selectedIds.length === history.length, onChange: toggleSelectAll })
-            ),
-            'Link','Shop','SP','Đã bán (Shop)','Đã bán (SP)','Note','Hành động'
-          ].map((h, idx) => typeof h === 'string' ? React.createElement('th', { key: 'hh'+idx, style: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: '#fff', padding: 14, textAlign: 'left', fontSize: 13, letterSpacing: '0.5px', borderLeft: idx===0 ? 'none' : '1px solid rgba(255,255,255,0.2)' } }, h) : h))),
-          React.createElement('tbody', { key: 'tb' }, history.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { background: idx % 2 === 0 ? '#fbfbff' : '#fff', transition: 'background 0.2s', borderBottom: '1px solid #f3f4f6' } }, [
-            React.createElement('td', { style: { padding: 12, textAlign: 'center', borderRight: '1px solid #f3f4f6' } },
-              React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
-            ),
-            React.createElement('td', { style: { position: 'relative', padding: 14, maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#2563eb' } },
-              React.createElement('a', { href: it.url, target: '_blank', rel: 'noopener noreferrer', title: it.url, style: { color: '#2563eb', textDecoration: 'none' } }, it.url),
-              React.createElement('button', { onClick: () => copyToClipboard(it.url, it.id), title: 'Copy link', style: { marginLeft: 8, padding: '2px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer' } }, copiedId === it.id ? '✅' : '📋')
-            ),
-            React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.shopName || '—'),
-            React.createElement('td', { style: { padding: 14, maxWidth: 280, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderLeft: '1px solid #f3f4f6' } }, it.productName || '—'),
-            React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.shopSold || '—'),
-            React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.productSold || '—'),
-            React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, (
-              editingId === it.id
-                ? React.createElement('input', { value: editingNote, onChange: e => setEditingNote(e.target.value), style: { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none' } })
-                : (it.note || '')
-            )),
-            React.createElement('td', { style: { padding: 14, display: 'flex', gap: 8, flexWrap: 'wrap', borderLeft: '1px solid #f3f4f6' } }, [
-              React.createElement(Button, { key: 'rec'+idx, variant: 'secondary', onClick: () => handleRecrawlItem(it.url) }, '↻ Crawl lại'),
-              editingId === it.id
-                ? React.createElement(Button, { key: 'save'+idx, variant: 'primary', onClick: () => handleSaveEdit(it) }, '💾 Lưu')
-                : React.createElement(Button, { key: 'edit'+idx, variant: 'secondary', onClick: () => handleStartEdit(it) }, '✏️ Sửa'),
-              editingId === it.id
-                ? React.createElement(Button, { key: 'cancel'+idx, variant: 'secondary', onClick: handleCancelEdit, style: { background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb' } }, '✖ Hủy')
-                : null,
-              React.createElement(Button, { key: 'del'+idx, variant: 'secondary', onClick: () => handleDeleteItem(it.id), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa')
-            ])
-          ])))
-        ]))
+      !groupByShop ? (
+        React.createElement('div', { key: 'tbl', style: { overflowX: 'auto' } },
+          React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0, background: 'white', borderRadius: 12, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.08)' } }, [
+            React.createElement('thead', { key: 'th' }, React.createElement('tr', null, [
+              React.createElement('th', { key: 'sel-h', style: { width: 42, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: '#fff', padding: 14, textAlign: 'center' } },
+                React.createElement('input', { type: 'checkbox', checked: history.length > 0 && selectedIds.length === history.length, onChange: toggleSelectAll })
+              ),
+              'Link','Shop','Số SP','SP','Đã bán (Shop)','Đã bán (SP)','Note','Hành động'
+            ].map((h, idx) => typeof h === 'string' ? React.createElement('th', { key: 'hh'+idx, style: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: '#fff', padding: 14, textAlign: 'left', fontSize: 13, letterSpacing: '0.5px', borderLeft: idx===0 ? 'none' : '1px solid rgba(255,255,255,0.2)' } }, h) : h))),
+            React.createElement('tbody', { key: 'tb' }, history.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { background: idx % 2 === 0 ? '#fbfbff' : '#fff', transition: 'background 0.2s', borderBottom: '1px solid #f3f4f6' } }, [
+              React.createElement('td', { style: { padding: 12, textAlign: 'center', borderRight: '1px solid #f3f4f6' } },
+                React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
+              ),
+              React.createElement('td', { style: { position: 'relative', padding: 14, maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#2563eb' },
+                onMouseEnter: () => setHoveredHistoryId(it.id),
+                onMouseLeave: () => setHoveredHistoryId(null)
+              }, [
+                React.createElement('a', { key: 'a', href: it.url, target: '_blank', rel: 'noopener noreferrer', title: it.url, style: { color: '#2563eb', textDecoration: 'none', paddingRight: 28, display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.url),
+                React.createElement('button', { key: 'copy', onClick: () => copyToClipboard(it.url, it.id), title: 'Copy link', style: { position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '2px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer', opacity: hoveredHistoryId === it.id ? 1 : 0, transition: 'opacity 0.15s ease' } }, copiedId === it.id ? '✅' : '📋')
+              ]),
+              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.shopName || '—'),
+              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', textAlign: 'center', color: '#111827', fontWeight: 600 } }, (() => { const k = it.shopId || it.shopSlug || it.shopName || 'unknown'; return shopCounts[k] || 1; })()),
+              React.createElement('td', { style: { padding: 14, maxWidth: 280, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderLeft: '1px solid #f3f4f6' } }, it.productName || '—'),
+              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.shopSold || '—'),
+              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.productSold || '—'),
+              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, (
+                editingId === it.id
+                  ? React.createElement('input', { value: editingNote, onChange: e => setEditingNote(e.target.value), style: { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none' } })
+                  : (it.note || '')
+              )),
+              React.createElement('td', { style: { padding: 14, display: 'flex', gap: 8, flexWrap: 'wrap', borderLeft: '1px solid #f3f4f6' } }, [
+                React.createElement(Button, { key: 'rec'+idx, variant: 'secondary', onClick: () => handleRecrawlItem(it.url) }, '↻ Crawl lại'),
+                editingId === it.id
+                  ? React.createElement(Button, { key: 'save'+idx, variant: 'primary', onClick: () => handleSaveEdit(it) }, '💾 Lưu')
+                  : React.createElement(Button, { key: 'edit'+idx, variant: 'secondary', onClick: () => handleStartEdit(it) }, '✏️ Sửa'),
+                editingId === it.id
+                  ? React.createElement(Button, { key: 'cancel'+idx, variant: 'secondary', onClick: handleCancelEdit, style: { background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb' } }, '✖ Hủy')
+                  : null,
+                React.createElement(Button, { key: 'del'+idx, variant: 'secondary', onClick: () => handleDeleteItem(it.id), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa')
+              ])
+            ])))
+          ]))
+      ) : (
+        // Grouped view
+        (() => {
+          const groups = {};
+          for (const it of history) {
+            const key = it.shopId || it.shopSlug || it.shopName || 'unknown';
+            if (!groups[key]) groups[key] = { key, shopId: it.shopId || null, shopSlug: it.shopSlug || null, shopName: it.shopName || it.shopSlug || 'Unknown Shop', items: [] };
+            groups[key].items.push(it);
+          }
+          const groupArr = Object.values(groups).sort((a,b) => String(a.shopName).localeCompare(String(b.shopName)));
+          return React.createElement('div', { key: 'groups', style: { display: 'flex', flexDirection: 'column', gap: 16 } },
+            groupArr.map((g, gi) => React.createElement('div', { key: g.key || gi, style: { border: '1px solid #e5e7eb', borderRadius: 12, background: 'white', overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.06)' } }, [
+              React.createElement('div', { key: 'hdr', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', borderBottom: '1px solid #e5e7eb' } }, [
+                React.createElement('div', { key: 'title', style: { display: 'flex', alignItems: 'baseline', gap: 10 } }, [
+                  React.createElement('span', { key: 'name', style: { fontWeight: 700, color: '#111827' } }, g.shopName),
+                  React.createElement('span', { key: 'cnt', style: { fontSize: 12, color: '#6b7280' } }, `(${g.items.length} sản phẩm)`) 
+                ]),
+                React.createElement('div', { key: 'actions', style: { display: 'flex', gap: 8 } }, [
+                  React.createElement(Button, { key: 'recg', variant: 'secondary', onClick: () => handleRecrawlGroup(g.items) }, '↻ Crawl cả nhóm'),
+                  React.createElement(Button, { key: 'delg', variant: 'secondary', onClick: () => handleDeleteGroup(g.items), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa nhóm')
+                ])
+              ]),
+              React.createElement('div', { key: 'list', style: { overflowX: 'auto' } },
+                React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0 } }, [
+                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, ['Link','Sản phẩm','Đã bán (SP)','Note','Hành động'].map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: '#f9fafb', color: '#374151', padding: 12, textAlign: 'left', fontSize: 13, borderBottom: '1px solid #e5e7eb' } }, h)))),
+                  React.createElement('tbody', { key: 'tb' }, g.items.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { borderBottom: '1px solid #f3f4f6' } }, [
+                    React.createElement('td', { style: { position: 'relative', padding: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#2563eb' },
+                      onMouseEnter: () => setHoveredHistoryId(it.id),
+                      onMouseLeave: () => setHoveredHistoryId(null)
+                    }, [
+                      React.createElement('a', { key: 'a', href: it.url, target: '_blank', rel: 'noopener noreferrer', title: it.url, style: { color: '#2563eb', textDecoration: 'none', paddingRight: 28, display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.url),
+                      React.createElement('button', { key: 'copy', onClick: () => copyToClipboard(it.url, it.id), title: 'Copy link', style: { position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '2px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer', opacity: hoveredHistoryId === it.id ? 1 : 0, transition: 'opacity 0.15s ease' } }, copiedId === it.id ? '✅' : '📋')
+                    ]),
+                    React.createElement('td', { style: { padding: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.productName || '—'),
+                    React.createElement('td', { style: { padding: 12 } }, it.productSold || '—'),
+                    React.createElement('td', { style: { padding: 12 } }, (
+                      editingId === it.id
+                        ? React.createElement('input', { value: editingNote, onChange: e => setEditingNote(e.target.value), style: { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none' } })
+                        : (it.note || '')
+                    )),
+                    React.createElement('td', { style: { padding: 12, display: 'flex', gap: 8, flexWrap: 'wrap' } }, [
+                      React.createElement(Button, { key: 'rec'+idx, variant: 'secondary', onClick: () => handleRecrawlItem(it.url) }, '↻ Crawl lại'),
+                      editingId === it.id
+                        ? React.createElement(Button, { key: 'save'+idx, variant: 'primary', onClick: () => handleSaveEdit(it) }, '💾 Lưu')
+                        : React.createElement(Button, { key: 'edit'+idx, variant: 'secondary', onClick: () => handleStartEdit(it) }, '✏️ Sửa'),
+                      editingId === it.id
+                        ? React.createElement(Button, { key: 'cancel'+idx, variant: 'secondary', onClick: handleCancelEdit, style: { background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb' } }, '✖ Hủy')
+                        : null,
+                      React.createElement(Button, { key: 'del'+idx, variant: 'secondary', onClick: () => handleDeleteItem(it.id), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa')
+                    ])
+                  ])))
+                ]))
+            ]))
+          );
+        })()
+      )
     ])
   );
 }

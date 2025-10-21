@@ -147,8 +147,54 @@ function writeHistory(arr) {
   fs.writeFileSync(HISTORY_PATH, JSON.stringify(arr, null, 2), 'utf-8');
 }
 
+// ===== Locale auto-detect via proxy IP =====
+function langFromCountry(country) {
+  const cc = String(country || '').toUpperCase();
+  const map = {
+    US: 'en-US', GB: 'en-GB', AU: 'en-AU', CA: 'en-CA', SG: 'en-SG', PH: 'en-PH',
+    VN: 'vi-VN', TH: 'th-TH', ID: 'id-ID', MY: 'ms-MY', KR: 'ko-KR', JP: 'ja-JP',
+    CN: 'zh-CN', TW: 'zh-TW', HK: 'zh-HK', IN: 'en-IN', DE: 'de-DE', FR: 'fr-FR',
+    ES: 'es-ES', MX: 'es-MX', BR: 'pt-BR', IT: 'it-IT', NL: 'nl-NL', SE: 'sv-SE'
+  };
+  return map[cc] || (cc ? `en-${cc}` : 'en-US');
+}
+
+async function autoDetectPrefsFromProxy(proxyStr) {
+  // Defaults to US if detection fails
+  const fallback = {
+    lang: 'en-US',
+    timezone: 'America/New_York',
+    geolocation: { latitude: 40.7128, longitude: -74.0060, accuracy: 100 },
+    source: 'default'
+  };
+  try {
+    if (!proxyStr) return fallback;
+    const agent = buildProxyAgent(proxyStr);
+    // Use ipapi.co for quick geo/timezone
+    const resp = await axios.get('https://ipapi.co/json', {
+      httpAgent: agent,
+      httpsAgent: agent,
+      timeout: 6000,
+      validateStatus: s => s >= 200 && s < 400
+    });
+    const d = resp.data || {};
+    const country = d.country || d.country_code || '';
+    const tz = d.timezone || 'America/New_York';
+    const lat = Number(d.latitude);
+    const lon = Number(d.longitude);
+    const lang = langFromCountry(country);
+    const geo = (Number.isFinite(lat) && Number.isFinite(lon))
+      ? { latitude: lat, longitude: lon, accuracy: 100 }
+      : { latitude: 40.7128, longitude: -74.0060, accuracy: 100 };
+    return { lang, timezone: tz, geolocation: geo, source: 'ipapi' };
+  } catch (e) {
+    console.log('Locale auto-detect failed, using defaults:', e.message);
+    return fallback;
+  }
+}
+
 // ===== CAPTCHA single-flight state per page =====
-const pageCaptchaState = new WeakMap(); // page -> { state: 'NONE'|'SEEN'|'SOLVING'|'SOLVED'|'FAILED', lastAt: number }
+const pageCaptchaState = new WeakMap(); // page -> { state: 'NONE'|'SEEN'|'SOLVING'|'SOLVED'|'FAILED', lastAt: number, promise?: Promise<any> }
 
 // Small debounce helper
 function debounceWait(ms = 350) {
@@ -180,7 +226,7 @@ function normalizeUrl(url) {
   }
 }
 
-function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note }) {
+function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note, shopId, shopSlug }) {
   const list = readHistory();
   const nurl = normalizeUrl(url);
   const now = new Date();
@@ -192,6 +238,8 @@ function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, 
     item = {
       id: 'h_' + now.getTime() + '_' + Math.random().toString(36).slice(2, 8),
       url: nurl,
+      shopId: shopId || null,
+      shopSlug: shopSlug || null,
       shopName: shopName || '',
       productName: productName || '',
       shopSold: shopSold || '',
@@ -203,6 +251,8 @@ function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, 
     };
     list.push(item);
   } else {
+    if (shopId && !item.shopId) item.shopId = shopId;
+    if (shopSlug && !item.shopSlug) item.shopSlug = shopSlug;
     item.shopName = shopName || item.shopName;
     item.productName = productName || item.productName;
     item.shopSold = shopSold ?? item.shopSold;
@@ -430,10 +480,10 @@ async function detectCaptchaType(page) {
   const info = await page.evaluate(() => {
     const lower = (s) => (s || '').toLowerCase();
     const bodyText = lower(document.body.innerText || '');
-    const hasCaptchaWord = /captcha|verify|slide to verify|select 2 objects|rotate/i.test(bodyText);
+    const hasCaptchaWord = /captcha|verify|slide to verify|select 2 objects|rotate|challenge|are you human|robot check|security check|human verification/i.test(bodyText);
     const iframes = Array.from(document.querySelectorAll('iframe'))
       .map(f => (f.src || '').toLowerCase())
-      .filter(u => u.includes('captcha') || u.includes('verify'));
+      .filter(u => u.includes('captcha') || u.includes('verify') || u.includes('challenge'));
     let type = 'NONE';
     if (hasCaptchaWord || iframes.length) {
       if (/select 2 objects|same shape/i.test(bodyText)) type = 'TIKTOK_OBJ';
@@ -449,9 +499,9 @@ async function solveCaptchaIfNeeded(page, apiKey) {
   try {
     // Single-flight guard
     const st = pageCaptchaState.get(page) || { state: 'NONE', lastAt: Date.now() };
-    if (st.state === 'SOLVING') {
-      console.log('⏳ CAPTCHA solving in progress, skip duplicate');
-      return { success: false, error: 'solving_in_progress' };
+    if (st.state === 'SOLVING' && st.promise) {
+      console.log('⏳ CAPTCHA solving in progress, awaiting existing promise...');
+      return await st.promise; // await the in-flight solve
     }
     // Detect type first
     const detected = await detectCaptchaType(page);
@@ -459,9 +509,10 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       pageCaptchaState.set(page, { state: 'NONE', lastAt: Date.now() });
       return { success: true, noop: true };
     }
-    pageCaptchaState.set(page, { state: 'SEEN', lastAt: Date.now() });
+  pageCaptchaState.set(page, { state: 'SEEN', lastAt: Date.now() });
 
-    // 1. Locate CAPTCHA region robustly (main page, iframes, canvas, or text container)
+  // 1. Locate CAPTCHA region robustly (main page, iframes, canvas, or text container)
+  await debounceWait(400); // stabilize DOM before capture
     console.log('📸 Capturing CAPTCHA screenshot...');
     let captchaElement = await page.$('img[src*="captcha"], img[alt*="captcha"], [class*="captcha"] canvas, canvas[class*="captcha"], [class*="captcha"]').catch(() => null);
     let captchaClip = null; // {x,y,width,height}
@@ -564,8 +615,11 @@ async function solveCaptchaIfNeeded(page, apiKey) {
     }
     
     // 4. Send to hmcaptcha with retries and optional polling
-    console.log('📤 Sending to hmcaptcha.com...');
-    pageCaptchaState.set(page, { state: 'SOLVING', lastAt: Date.now() });
+  console.log('📤 Sending to hmcaptcha.com...');
+  // Wrap the entire solving flow in a promise and store it, so other callers can await it
+  let resolver;
+  const solvingPromise = new Promise((resolve) => { resolver = resolve; });
+  pageCaptchaState.set(page, { state: 'SOLVING', lastAt: Date.now(), promise: solvingPromise, resolver });
     const maxAttempts = 3;
     let lastErr = null;
     let resultData = null;
@@ -619,12 +673,14 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       }
     }
     if (!resultData) {
+      const out = { success: false, error: lastErr ? lastErr.message : 'Solver failed without data' };
       pageCaptchaState.set(page, { state: 'FAILED', lastAt: Date.now() });
-      return { success: false, error: lastErr ? lastErr.message : 'Solver failed without data' };
+      resolver(out);
+      return out;
     }
 
     console.log('✅ CAPTCHA solved:', resultData);
-    pageCaptchaState.set(page, { state: 'SOLVED', lastAt: Date.now() });
+  pageCaptchaState.set(page, { state: 'SOLVED', lastAt: Date.now() });
     
     // 6. Execute action based on type
     if (captchaType === 'ALL_CAPTCHA_SLIDE') {
@@ -715,16 +771,27 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       ((captchaType === 'TIKTOK_ROTATE_APP' || captchaType === 'TIKTOK_ROTATE_WEB') && typeof resultData.angle === 'number')
     );
     if (!valid) {
+      const out = { success: false, error: 'Invalid solver data' };
       pageCaptchaState.set(page, { state: 'FAILED', lastAt: Date.now() });
-      return { success: false, error: 'Invalid solver data' };
+      resolver(out);
+      return out;
     }
 
     console.log('✅ Action executed successfully');
-    return { success: true, captchaType, data: resultData };
+    const out = { success: true, captchaType, data: resultData };
+    resolver(out);
+    return out;
     
   } catch (error) {
     console.error('❌ CAPTCHA solve error:', error.message);
-    return { success: false, error: error.message };
+    const out = { success: false, error: error.message };
+    // Try to resolve any in-flight waiter via stored resolver if present
+    const current = pageCaptchaState.get(page) || {};
+    if (current && typeof current.resolver === 'function') {
+      try { current.resolver(out); } catch {}
+    }
+    pageCaptchaState.set(page, { state: 'FAILED', lastAt: Date.now() });
+    return out;
   }
 }
 
@@ -949,7 +1016,7 @@ const crawlJobs = new Map();
 // Start async crawl job
 app.post('/api/crawl-async', async (req, res) => {
   try {
-    const { links, proxy, apiKey, note, concurrency } = req.body || {};
+    const { links, proxy, apiKey, note, concurrency, prefs } = req.body || {};
     if (!Array.isArray(links) || links.length === 0) return res.status(400).json({ error: 'links must be a non-empty array' });
     const id = 'job_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const job = {
@@ -971,7 +1038,7 @@ app.post('/api/crawl-async', async (req, res) => {
         for (let i = 0; i < links.length; i += batchSize) {
           const chunk = links.slice(i, i + batchSize);
           const response = await axios.post(`http://localhost:${SELF_PORT}/api/crawl`, {
-            links: chunk, proxy, apiKey, note, concurrency
+            links: chunk, proxy, apiKey, note, concurrency, prefs
           }, { timeout: 600000 });
           const { results } = response.data || {};
           if (Array.isArray(results)) {
@@ -1000,9 +1067,54 @@ app.get('/api/crawl-async/:id', (req, res) => {
   res.json(job);
 });
 
+// Dry-run endpoint to test CAPTCHA solving on a single URL without extraction
+app.post('/api/captcha-dry-run', async (req, res) => {
+  const { url, apiKey, proxy } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  if (!apiKey) return res.status(400).json({ error: 'apiKey is required' });
+
+  let browser;
+  try {
+    const launchOptions = {
+      headless: 'new',
+      ignoreHTTPSErrors: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--ignore-certificate-errors'
+      ]
+    };
+    if (proxy) {
+      const parts = proxy.split(':');
+      if (parts.length >= 2) launchOptions.args.push(`--proxy-server=${parts[0]}:${parts[1]}`);
+    }
+    browser = await puppeteer.launch(launchOptions);
+    const page = await browser.newPage();
+    if (proxy && proxy.split(':').length >= 4) {
+      await page.authenticate({ username: proxy.split(':')[2], password: proxy.split(':')[3] });
+    }
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await randomDelay(1200, 2000);
+    const typ = await detectCaptchaType(page);
+    if (typ === 'NONE') {
+      await browser.close();
+      return res.json({ success: true, message: 'No CAPTCHA detected' });
+    }
+    const out = await solveCaptchaIfNeeded(page, apiKey);
+    await browser.close();
+    return res.json({ ...out, detectedType: typ });
+  } catch (e) {
+    if (browser) try { await browser.close(); } catch {}
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // Crawl endpoint
 app.post('/api/crawl', async (req, res) => {
-  const { links, proxy, apiKey, note } = req.body;
+  const { links, proxy, apiKey, note, prefs } = req.body;
   if (!Array.isArray(links)) return res.status(400).json({ error: 'links must be an array' });
   // Concurrency: allow client to set, but clamp to 1..3 to avoid overload
   const requestedConc = Number(req.body?.concurrency);
@@ -1014,6 +1126,19 @@ app.post('/api/crawl', async (req, res) => {
   }
 
   const results = [];
+
+  // Preferences for locale/region
+  // 1) Auto-detect from proxy if available and prefs missing
+  let detected = null;
+  if (!prefs && proxy) {
+    detected = await autoDetectPrefsFromProxy(proxy).catch(() => null);
+  }
+  const basePrefs = prefs || detected || { lang: 'en-US', timezone: 'America/New_York', geolocation: { latitude: 40.7128, longitude: -74.0060, accuracy: 100 } };
+  const langPref = (basePrefs && typeof basePrefs.lang === 'string' && basePrefs.lang.trim()) ? basePrefs.lang.trim() : 'en-US';
+  const timezonePref = (basePrefs && typeof basePrefs.timezone === 'string' && basePrefs.timezone.trim()) ? basePrefs.timezone.trim() : 'America/New_York';
+  const geolocationPref = (basePrefs && typeof basePrefs.geolocation === 'object' && basePrefs.geolocation)
+    ? { latitude: Number(basePrefs.geolocation.latitude) || 40.7128, longitude: Number(basePrefs.geolocation.longitude) || -74.0060, accuracy: Number(basePrefs.geolocation.accuracy) || 100 }
+    : { latitude: 40.7128, longitude: -74.0060, accuracy: 100 };
 
   // Worker function to crawl a single URL (mostly existing logic)
   const crawlUrl = async (url) => {
@@ -1048,7 +1173,8 @@ app.post('/api/crawl', async (req, res) => {
             '--disable-gpu',
             '--disable-dev-shm-usage',
             '--disable-software-rasterizer',
-            '--disable-extensions'
+            '--disable-extensions',
+            `--lang=${langPref}`
           ]
         };
         
@@ -1064,12 +1190,24 @@ app.post('/api/crawl', async (req, res) => {
         
         browser = await puppeteer.launch(launchOptions);
         const page = await browser.newPage();
+        // Emulate timezone + grant geo permission + set geolocation
+        try {
+          const context = browser.defaultBrowserContext();
+          await context.overridePermissions('https://www.tiktok.com', ['geolocation']);
+          await context.overridePermissions('https://vm.tiktok.com', ['geolocation']);
+          await page.emulateTimezone(timezonePref);
+          await page.setGeolocation(geolocationPref);
+        } catch (e) {
+          console.log('Geo/Timezone emulate warning:', e.message);
+        }
         // Tighten resource loading to speed up nav
         try {
           await page.setRequestInterception(true);
           page.on('request', (req) => {
             const type = req.resourceType();
-            if (['image','media','font','stylesheet','manifest','websocket'].includes(type)) {
+            // Do NOT block images/styles/websockets — needed for CAPTCHA/UI rendering
+            // Keep blocking heavy/less critical types for speed
+            if (['media','font','manifest'].includes(type)) {
               return req.abort();
             }
             return req.continue();
@@ -1088,7 +1226,7 @@ app.post('/api/crawl', async (req, res) => {
         
         // Set extra headers để giống US user thật
         await page.setExtraHTTPHeaders({
-          'Accept-Language': 'en-US,en;q=0.9',  // ⭐ US language only
+          'Accept-Language': `${langPref},${langPref.split('-')[0]};q=0.9`,  // ưu tiên ngôn ngữ chính
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
           'Accept-Encoding': 'gzip, deflate, br, zstd',
           'Connection': 'keep-alive',
@@ -1112,8 +1250,8 @@ app.post('/api/crawl', async (req, res) => {
         }
         
         // 🎯 API INTERCEPTION - Primary data extraction method
-        let apiData = null; // Single unified API data object
-        let apiRequestsCount = 0;
+  let apiData = null; // Product detail API payload (preferred)
+  let apiRequestsCount = 0;
         
         console.log('🎯 Setting up API interception...');
         
@@ -1131,22 +1269,30 @@ app.post('/api/crawl', async (req, res) => {
             const data = await response.json();
             
             // TikTok Shop API patterns
-            const isShopAPI = 
-              url.includes('/api/shop/') ||
-              url.includes('page_data') ||
-              url.includes('pdp_desktop') ||
-              url.includes('/product/detail') ||
-              url.includes('ProductDetail');
+            const isShopAPI = url.includes('/api/shop/');
+            const isSuggestWords = /get_suggest_words/i.test(url);
+            const isProductDetail = /pdp_desktop\/page_data|\/product\/detail|ProductDetail/i.test(url);
+            const isProductShaped = (obj) => {
+              try {
+                if (!obj || typeof obj !== 'object') return false;
+                const d = obj.data;
+                if (!d || typeof d !== 'object') return false;
+                return Boolean(
+                  d.global_data?.product_info ||
+                  d.product || d.productDetail || d.productInfo || d.item
+                );
+              } catch { return false; }
+            };
             
             if (isShopAPI) {
               console.log('✓ Intercepted TikTok Shop API:', url.substring(0, 120));
               console.log('  Status:', data.status_code || data.code || 'unknown');
               console.log('  Data keys:', Object.keys(data || {}).join(', '));
               
-              // Store first valid response
-              if (!apiData && data.data) {
+              // Only treat product detail endpoints as primary apiData
+              if (!apiData && isProductDetail && isProductShaped(data)) {
                 apiData = data;
-                console.log('  → Captured API data!');
+                console.log('  → Captured PRODUCT API data!');
               }
               
               apiRequestsCount++;
@@ -1156,18 +1302,20 @@ app.post('/api/crawl', async (req, res) => {
           }
         });
         
-        // Set user agent như browser thật
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+  // Set user agent như browser thật
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
         
         // Ẩn dấu hiệu automation + US fingerprinting
-        await page.evaluateOnNewDocument(() => {
+        await page.evaluateOnNewDocument((lang) => {
           // Hide automation
           Object.defineProperty(navigator, 'webdriver', { get: () => false });
           delete Object.getPrototypeOf(navigator).webdriver;
           
           // US browser fingerprint
-          Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-          Object.defineProperty(navigator, 'language', { get: () => 'en-US' });
+          try {
+            Object.defineProperty(navigator, 'languages', { get: () => [lang, lang.split('-')[0]] });
+            Object.defineProperty(navigator, 'language', { get: () => lang });
+          } catch {}
           
           // Real browser plugins
           Object.defineProperty(navigator, 'plugins', { 
@@ -1195,13 +1343,12 @@ app.post('/api/crawl', async (req, res) => {
               originalQuery(parameters)
           );
           
-          // Timezone (US Eastern Time)
-          Date.prototype.getTimezoneOffset = function() { return 300; }; // UTC-5
-        });
+          // Timezone handled by page.emulateTimezone('America/New_York')
+        }, langPref);
         
-        // Set headers
+        // Set headers (normalize language)
         await page.setExtraHTTPHeaders({
-          'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
+          'Accept-Language': `${langPref},${langPref.split('-')[0]};q=0.9`,
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
         });
         
@@ -1355,15 +1502,50 @@ app.post('/api/crawl', async (req, res) => {
           
           if (gateCheck.isSmall || gateCheck.hasGate) {
             console.log(`❌ Selector timeout + gate detected. HTML: ${gateCheck.htmlSize}B, gate keywords: ${gateCheck.hasGate}`);
-            results.push({
-              url,
-              status: 'gate_detected',
-              reason: 'gate',
-              message: `Page stuck at gate/verify. HTML size: ${gateCheck.htmlSize}B`,
-              suggestion: 'IP/proxy bị TikTok chặn. Đổi proxy residential, giảm concurrency xuống 1, hoặc thử region khác.'
-            });
-            await browser.close();
-            return;
+            // Attempt CAPTCHA solve at this late stage if API key is available
+            if (apiKey) {
+              console.log('🔧 Late-stage CAPTCHA attempt after gate detection...');
+              const lateType = await detectCaptchaType(page);
+              if (lateType !== 'NONE') {
+                const solved = await solveCaptchaIfNeeded(page, apiKey);
+                if (solved.success) {
+                  console.log('✅ Late-stage CAPTCHA solved. Continuing...');
+                  await randomDelay(2500, 4000);
+                } else {
+                  console.log('❌ CAPTCHA NOT solved at late stage:', solved.error);
+                  results.push({
+                    url,
+                    status: 'captcha_failed',
+                    reason: 'captcha',
+                    message: 'CAPTCHA detected late (after selector timeout) and solver failed: ' + (solved.error || 'Unknown'),
+                    suggestion: 'Đổi proxy residential sạch, giảm concurrency, kiểm tra API key và thử lại.'
+                  });
+                  await browser.close();
+                  return;
+                }
+              } else {
+                console.log('ℹ Gate detected but no explicit CAPTCHA type recognized. Treat as gate.');
+                results.push({
+                  url,
+                  status: 'gate_detected',
+                  reason: 'gate',
+                  message: `Page stuck at gate/verify. HTML size: ${gateCheck.htmlSize}B`,
+                  suggestion: 'IP/proxy bị TikTok chặn. Đổi proxy residential, giảm concurrency xuống 1, hoặc thử region khác.'
+                });
+                await browser.close();
+                return;
+              }
+            } else {
+              results.push({
+                url,
+                status: 'gate_detected',
+                reason: 'gate',
+                message: `Page stuck at gate/verify. HTML size: ${gateCheck.htmlSize}B`,
+                suggestion: 'Cần thêm API Key hmcaptcha để thử solve. Ngoài ra, đổi proxy residential/giảm concurrency.'
+              });
+              await browser.close();
+              return;
+            }
           }
           console.log('⚠ Selector timeout but HTML looks normal (size: ' + gateCheck.htmlSize + 'B), continuing...');
         }
@@ -1592,6 +1774,10 @@ app.post('/api/crawl', async (req, res) => {
             author.total_sold ||
             author.total_products ||
             '';
+
+          // Capture stable shop identifiers if present
+          var _extractedShopId = author.shop_id || author.sec_uid || author.uid || author.id || null;
+          var _extractedShopSlug = author.unique_id || author.username || author.shop_name || null;
           
           console.log('\n=== Extracted Values ===');
           console.log('Product Name:', productName || '(empty)');
@@ -1682,6 +1868,8 @@ app.post('/api/crawl', async (req, res) => {
           url,
           status: 'geo_restricted',
           reason: 'geo',
+          shopId: (typeof _extractedShopId !== 'undefined') ? _extractedShopId : null,
+          shopSlug: (typeof _extractedShopSlug !== 'undefined') ? _extractedShopSlug : null,
           shopName: shopName || 'N/A (Geo-blocked)',
           shopSold: shopSold || 'N/A (Geo-blocked)',
           productName: productName || 'Unknown',
@@ -1690,7 +1878,7 @@ app.post('/api/crawl', async (req, res) => {
           suggestion: 'Dùng proxy đúng khu vực sản phẩm, hoặc link vt.tiktok.com nội địa.'
         };
         results.push(item);
-        try { upsertHistoryItem({ url, shopName: item.shopName, shopSold: item.shopSold, productName: item.productName, productSold: item.productSold, note }); } catch {}
+        try { upsertHistoryItem({ url, shopName: item.shopName, shopSold: item.shopSold, productName: item.productName, productSold: item.productSold, note, shopId: item.shopId, shopSlug: item.shopSlug }); } catch {}
         return; // finish this URL
       }
       
@@ -1701,13 +1889,15 @@ app.post('/api/crawl', async (req, res) => {
           url,
           status: 'success',
           reason: 'ok',
+          shopId: _extractedShopId || null,
+          shopSlug: _extractedShopSlug || null,
           shopName,
           shopSold,
           productName,
           productSold
         };
         results.push(item);
-        try { upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note }); } catch {}
+        try { upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note, shopId: item.shopId, shopSlug: item.shopSlug }); } catch {}
         return;
       }
       
@@ -1742,13 +1932,15 @@ app.post('/api/crawl', async (req, res) => {
           url,
           status: 'success_cheerio',
           reason: 'ok',
+          shopId: (typeof _extractedShopId !== 'undefined') ? _extractedShopId : null,
+          shopSlug: (typeof _extractedShopSlug !== 'undefined') ? _extractedShopSlug : null,
           shopName: cheerioShopName,
           shopSold: cheerioShopSold,
           productName: cheerioProductName,
           productSold: cheerioProductSold
         };
         results.push(item);
-        try { upsertHistoryItem({ url, shopName: item.shopName, shopSold: item.shopSold, productName: item.productName, productSold: item.productSold, note }); } catch {}
+        try { upsertHistoryItem({ url, shopName: item.shopName, shopSold: item.shopSold, productName: item.productName, productSold: item.productSold, note, shopId: item.shopId, shopSlug: item.shopSlug }); } catch {}
       } else {
         // Thực sự không có gì
         const item = {
