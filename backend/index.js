@@ -311,12 +311,15 @@ app.post('/api/history/save', (req, res) => {
 app.delete('/api/history/:id', (req, res) => {
   try {
     const id = req.params.id;
+    console.log('DELETE /api/history/', id);
     const list = readHistory();
     const next = list.filter(it => it.id !== id);
     if (next.length === list.length) return res.status(404).json({ error: 'not found' });
     writeHistory(next);
+    console.log('Deleted. before=', list.length, ' after=', next.length);
     res.json({ ok: true });
   } catch (e) {
+    console.error('Delete error:', e);
     res.status(500).json({ error: e.message });
   }
 });

@@ -2,6 +2,7 @@ services:
   backend:
     build: ./backend
     container_name: tts-backend
+    user: "0:0"
     environment:
       - NODE_ENV=production
       - PORT=8080
