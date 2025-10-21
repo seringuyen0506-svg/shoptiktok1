@@ -7,6 +7,8 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+// Import vanilla puppeteer to access executablePath helper
+import vanillaPuppeteer from 'puppeteer';
 
 // Sử dụng stealth plugin để tránh bị phát hiện
 puppeteer.use(StealthPlugin());
@@ -45,6 +47,33 @@ app.use(express.json());
 
 // Random delay helper
 const randomDelay = (min, max) => new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
+
+// Resolve Chromium executable path reliably in container and local
+function resolveChromiumExecutablePath() {
+  try {
+    const envPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    if (envPath && fs.existsSync(envPath)) return envPath;
+  } catch {}
+
+  try {
+    // puppeteer >= v19 exposes executablePath()
+    const p = typeof vanillaPuppeteer.executablePath === 'function' ? vanillaPuppeteer.executablePath() : null;
+    if (p && fs.existsSync(p)) return p;
+  } catch {}
+
+  const candidates = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chrome',
+    '/opt/google/chrome/chrome'
+  ];
+  for (const c of candidates) {
+    try { if (fs.existsSync(c)) return c; } catch {}
+  }
+  return null;
+}
 
 // Helper: Clean text
 function textCleanup(text) {
@@ -826,7 +855,8 @@ app.post('/api/check-ip', async (req, res) => {
         '--disable-blink-features=AutomationControlled',
         '--ignore-certificate-errors'
       ],
-      ignoreHTTPSErrors: true
+      ignoreHTTPSErrors: true,
+      executablePath: resolveChromiumExecutablePath() || undefined
     };
     
     // Parse proxy if provided
@@ -1098,7 +1128,8 @@ app.post('/api/captcha-dry-run', async (req, res) => {
         '--disable-setuid-sandbox',
         '--disable-blink-features=AutomationControlled',
         '--ignore-certificate-errors'
-      ]
+      ],
+      executablePath: resolveChromiumExecutablePath() || undefined
     };
     if (proxy) {
       const parts = proxy.split(':');
@@ -1190,7 +1221,8 @@ app.post('/api/crawl', async (req, res) => {
             '--disable-software-rasterizer',
             '--disable-extensions',
             `--lang=${langPref}`
-          ]
+          ],
+          executablePath: resolveChromiumExecutablePath() || undefined
         };
         
         // Parse proxy đúng format: host:port:username:password
