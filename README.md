@@ -1,4 +1,61 @@
-# 🚀 TikTok Shop Crawler - CHỈ DÙNG HMCAPTCHA
+# TikTok Shop Crawler - Deploy Guide
+
+This guide helps you deploy:
+- Backend (Express + Puppeteer) to Render using Dockerfile
+- Frontend (React UMD static) to Vercel
+
+## Backend (Render)
+
+- Root: `backend/` (contains Dockerfile)
+- Build & Run:
+  - Render will build the Docker image using `backend/Dockerfile`.
+  - App listens on `PORT` env (defaults to 5000). Render sets it automatically.
+- Recommended Environment Variables:
+  - `NODE_ENV=production`
+  - `ALLOW_ORIGINS=https://<your-frontend>.vercel.app` (comma-separated for multiple)
+  - Optional: `HM_CAPTCHA_API_KEY` if you want a default; the UI can still pass it per request.
+- Persistent data:
+  - History is stored in `backend/data/history.json`. Attach a Render Persistent Disk and mount to `/app/backend/data` if you need persistence across restarts.
+- Health checks:
+  - `GET /health` -> `ok`
+  - `GET /api/health` -> JSON status
+
+## Frontend (Vercel)
+
+- Root: `frontend/`
+- Static hosting (no build step required). Ensure `index.html` and `app.js` are present.
+- Backend URL:
+  - The app calls relative `/api/...`. For cross-origin deployment, set a reverse proxy or add a UI field to configure base URL.
+  - Optionally, add a custom domain or Vercel rewrite to forward `/api` to your Render backend.
+
+## CORS
+
+The backend enables CORS with credentials for:
+- `*.trycloudflare.com`
+- `*.vercel.app`
+- `http://localhost:<port>`
+- Additional origins can be added via `ALLOW_ORIGINS` env.
+
+## Dockerfile notes
+
+- Base image: `node:20-bookworm-slim`
+- Installs system libs required by Chromium for Puppeteer.
+- `npm ci --omit=dev`
+- Exposes `5000` but uses `PORT` at runtime.
+
+## Troubleshooting
+
+- If Chromium missing dependency: update `backend/Dockerfile` with the required package and redeploy.
+- If CORS blocked on Vercel domain: add it to `ALLOW_ORIGINS` on Render.
+- If history not persisting on Render free tier: attach a Persistent Disk.
+
+## Scripts
+
+Backend: `npm start` in `backend/` runs `index.js`.
+
+---
+
+Happy crawling!# 🚀 TikTok Shop Crawler - CHỈ DÙNG HMCAPTCHA
 
 ## ⚡ Tính năng chính
 
