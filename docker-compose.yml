@@ -25,12 +25,9 @@ services:
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - certbot-webroot:/var/www/certbot:ro
+      - /opt/certbot-webroot:/var/www/certbot:ro
     restart: unless-stopped
 
 networks:
   default:
     name: tiktokshop_net
-
-volumes:
-  certbot-webroot:

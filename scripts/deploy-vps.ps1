@@ -17,7 +17,7 @@ function Invoke-SSH {
 }
 
 Write-Host "==> Ensuring docker-compose volumes and webroot on host..." -ForegroundColor Cyan
-Invoke-SSH "mkdir -p /opt/tiktokshop && mkdir -p /opt/certbot-webroot/.well-known/acme-challenge && docker volume create certbot-webroot" | Out-Null
+Invoke-SSH "mkdir -p /opt/tiktokshop && mkdir -p /opt/certbot-webroot/.well-known/acme-challenge" | Out-Null
 
 Write-Host "==> Cloning or pulling repo..." -ForegroundColor Cyan
 Invoke-SSH "cd /opt/tiktokshop && if [ ! -d .git ]; then git clone $RepoUrl .; else git fetch --all && git reset --hard origin/$Branch; fi && git checkout $Branch"
@@ -29,13 +29,13 @@ Write-Host "==> Building and starting stack (HTTP)..." -ForegroundColor Cyan
 Invoke-SSH "cd /opt/tiktokshop && docker compose up -d --build"
 
 Write-Host "==> Copying initial ACME file to volume..." -ForegroundColor Cyan
-Invoke-SSH "docker run --rm -v certbot-webroot:/data alpine sh -c 'mkdir -p /data/.well-known/acme-challenge && echo ok > /data/.well-known/acme-challenge/ping'"
+Invoke-SSH "sh -lc 'mkdir -p /opt/certbot-webroot/.well-known/acme-challenge && echo ok > /opt/certbot-webroot/.well-known/acme-challenge/ping'"
 
 Write-Host "==> Testing HTTP health..." -ForegroundColor Cyan
 Invoke-SSH "curl -sf http://127.0.0.1/api/health || true"
 
 Write-Host "==> Installing certbot (if missing) and issuing certificate..." -ForegroundColor Cyan
-Invoke-SSH "apt-get update -y && apt-get install -y certbot && certbot certonly --webroot -w /var/lib/letsencrypt -d $Domain -m $Email --agree-tos --non-interactive" || Write-Host "Certbot attempt failed, ensure DNS is pointed and HTTP is reachable" -ForegroundColor Yellow
+Invoke-SSH "apt-get update -y && apt-get install -y certbot && certbot certonly --webroot -w /opt/certbot-webroot -d $Domain -m $Email --agree-tos --non-interactive" || Write-Host "Certbot attempt failed, ensure DNS is pointed and HTTP is reachable" -ForegroundColor Yellow
 
 Write-Host "==> Switching to HTTPS config and exposing 443..." -ForegroundColor Cyan
 Invoke-SSH "cd /opt/tiktokshop && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build"
