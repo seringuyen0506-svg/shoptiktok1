@@ -38,7 +38,7 @@ Write-Host "==> Copying initial ACME file to volume..." -ForegroundColor Cyan
 Invoke-SSH "bash -lc 'mkdir -p /opt/certbot-webroot/.well-known/acme-challenge && echo ok > /opt/certbot-webroot/.well-known/acme-challenge/ping'"
 
 Write-Host "==> Waiting for Nginx (HTTP) to be ready..." -ForegroundColor Cyan
-Invoke-SSH "bash -lc 'for i in $(seq 1 20); do curl -sf http://127.0.0.1/.well-known/acme-challenge/ping >/dev/null 2>&1 && echo ready && break; sleep 2; done'"
+Invoke-SSH "bash -lc 'i=0; until [ \"\$(curl -s -o /dev/null -w %\\{http_code\\} http://127.0.0.1/.well-known/acme-challenge/ping)\" = \"200\" ] || [ \"$i\" -ge 30 ]; do i=\"$((i+1))\"; sleep 2; done; echo ready'"
 
 Write-Host "==> Testing HTTP health..." -ForegroundColor Cyan
 Invoke-SSH "curl -sf http://127.0.0.1/api/health || true"

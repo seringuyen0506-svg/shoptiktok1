@@ -4,7 +4,12 @@ WORKDIR /app
 
 # Install deps first for better cache
 COPY package*.json ./
-RUN npm ci --only=production
+# Use npm ci if lockfile exists, otherwise fallback to npm install
+RUN if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then \
+			npm ci --omit=dev; \
+		else \
+			npm install --omit=dev; \
+		fi
 
 # Copy source
 COPY . .
