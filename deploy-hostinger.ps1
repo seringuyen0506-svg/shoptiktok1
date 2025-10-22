@@ -208,9 +208,9 @@ echo "3. Setup SSL certificate"
 echo ""
 '@
 
-# Save script to temp file
+# Save script to temp file with Unix line endings
 $TEMP_SCRIPT = "$env:TEMP\deploy_hostinger.sh"
-$DEPLOY_SCRIPT | Out-File -FilePath $TEMP_SCRIPT -Encoding UTF8 -NoNewline
+$DEPLOY_SCRIPT -replace "`r`n","`n" | Out-File -FilePath $TEMP_SCRIPT -Encoding UTF8 -NoNewline
 
 Write-Host "Deployment script created!" -ForegroundColor Green
 Write-Host ""
