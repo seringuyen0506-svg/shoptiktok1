@@ -29,21 +29,6 @@ function App() {
   const [hoveredHistoryId, setHoveredHistoryId] = useState(null); // show copy on hover in history
   const [groupByShop, setGroupByShop] = useState(false); // group history by shop
   const [collapsedGroups, setCollapsedGroups] = useState({}); // key:boolean collapsed
-  
-  // Shop crawl states
-  const [shopUrl, setShopUrl] = useState('');
-  const [shopAmount, setShopAmount] = useState(30);
-  const [crawlingShop, setCrawlingShop] = useState(false);
-  const [shopApiKey, setShopApiKey] = useState('');
-  const [shopCrawlProgress, setShopCrawlProgress] = useState('');
-  
-  // AI Analysis states
-  const [deepseekApiKey, setDeepseekApiKey] = useState('');
-  const [analyzingGrowth, setAnalyzingGrowth] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState(null);
-  const [selectedShopForAnalysis, setSelectedShopForAnalysis] = useState(null);
-  const [analysisProgress, setAnalysisProgress] = useState('');
-  
   const shopCounts = useMemo(() => {
     const counts = {};
     for (const it of history) {
@@ -67,10 +52,6 @@ function App() {
     if (savedProxy) setProxy(savedProxy);
     const savedApiKey = localStorage.getItem('hmcaptchaApiKey');
     if (savedApiKey) setApiKey(savedApiKey);
-    const savedShopApiKey = localStorage.getItem('shopApiKey');
-    if (savedShopApiKey) setShopApiKey(savedShopApiKey);
-    const savedDeepseekKey = localStorage.getItem('deepseekApiKey');
-    if (savedDeepseekKey) setDeepseekApiKey(savedDeepseekKey);
     const savedConc = parseInt(localStorage.getItem('crawlConcurrency') || '2', 10);
     if (!Number.isNaN(savedConc)) setConcurrency(Math.min(Math.max(savedConc, 1), 3));
     const savedAsync = localStorage.getItem('crawlAsyncMode');
@@ -226,162 +207,6 @@ function App() {
   };
 
   useEffect(() => { loadHistory(); }, []);
-
-  const handleCrawlShop = async () => {
-    if (!shopUrl.trim()) {
-      setShopCrawlProgress('⚠️ Vui lòng nhập Shop URL!');
-      setTimeout(() => setShopCrawlProgress(''), 3000);
-      return;
-    }
-    
-    if (!shopApiKey.trim()) {
-      setShopCrawlProgress('⚠️ Vui lòng nhập API Key cho scrapecreators.com!');
-      setTimeout(() => setShopCrawlProgress(''), 3000);
-      return;
-    }
-
-    setCrawlingShop(true);
-    setResults([]);
-    setShopCrawlProgress('🔍 Đang kết nối tới scrapecreators.com...');
-
-    try {
-      setShopCrawlProgress('📡 Đang lấy danh sách sản phẩm từ shop...');
-      
-      const res = await fetch('/api/crawl-shop', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shopUrl: shopUrl.trim(),
-          amount: shopAmount || 30,
-          apiKey: shopApiKey.trim(),
-          note: note || 'Crawled via Shop API'
-        }),
-        credentials: 'include'
-      });
-
-      setShopCrawlProgress('⏳ Đang xử lý dữ liệu...');
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || `Server error: ${res.status}`);
-      }
-
-      if (data.success) {
-        setShopCrawlProgress(`✅ Crawl thành công ${data.totalSaved} sản phẩm từ shop "${data.shopInfo.name}"!`);
-        
-        console.log('📦 Shop Info:', data.shopInfo);
-        console.log('📦 Products saved:', data.totalSaved);
-        
-        // Reload history to show new products
-        setShopCrawlProgress('🔄 Đang tải lại lịch sử...');
-        await loadHistory();
-        
-        // Clear shop URL after success
-        setShopUrl('');
-        
-        // Auto-hide success message after 3s
-        setTimeout(() => setShopCrawlProgress(''), 3000);
-      } else {
-        throw new Error('Crawl không thành công');
-      }
-
-    } catch (error) {
-      console.error('❌ Error crawling shop:', error);
-      setShopCrawlProgress(`❌ Lỗi: ${error.message}`);
-      setTimeout(() => setShopCrawlProgress(''), 5000);
-    } finally {
-      setCrawlingShop(false);
-    }
-  };
-
-  const handleAnalyzeGrowth = async (shopName, shopId) => {
-    if (!deepseekApiKey.trim()) {
-      setAnalysisProgress('⚠️ Vui lòng nhập DeepSeek API Key!');
-      setTimeout(() => setAnalysisProgress(''), 3000);
-      return;
-    }
-
-    setAnalyzingGrowth(true);
-    setSelectedShopForAnalysis(shopName);
-    setAnalysisResult(null);
-    setAnalysisProgress('🔍 Đang thu thập dữ liệu...');
-
-    try {
-      setAnalysisProgress('📡 Đang gửi request đến server...');
-      
-      const res = await fetch('/api/analyze-growth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shopName: shopName,
-          shopId: shopId,
-          deepseekApiKey: deepseekApiKey.trim()
-        }),
-        credentials: 'include'
-      });
-
-      setAnalysisProgress('⏳ Đang chờ phản hồi từ server...');
-
-      // Check if response is JSON
-      const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await res.text();
-        console.error('❌ Non-JSON response:', text);
-        throw new Error('Server trả về response không đúng format. Kiểm tra console để xem chi tiết.');
-      }
-
-      const data = await res.json();
-      setAnalysisProgress('🤖 Đang xử lý kết quả từ AI...');
-      
-      console.log('📊 Analysis response:', data);
-      console.log('📊 Analysis result keys:', Object.keys(data));
-
-      if (!res.ok) {
-        throw new Error(data.error || `Server error: ${res.status}`);
-      }
-
-      if (data.success) {
-        console.log('✅ Setting analysis result:', {
-          hasShopInfo: !!data.shopInfo,
-          hasTopProducts: !!data.topProducts,
-          hasAiAnalysis: !!data.aiAnalysis,
-          topProductsCount: data.topProducts?.length
-        });
-        
-        // Clean markdown symbols from AI analysis
-        if (data.aiAnalysis) {
-          data.aiAnalysis = data.aiAnalysis
-            .replace(/#{1,6}\s/g, '') // Remove # headers
-            .replace(/\*\*/g, '')      // Remove ** bold
-            .replace(/\*/g, '')        // Remove * italic
-            .replace(/`/g, '')         // Remove ` code
-            .replace(/^[-*]\s/gm, '• '); // Replace - or * lists with •
-        }
-        
-        setAnalysisResult(data);
-        setAnalysisProgress('✅ Phân tích hoàn tất!');
-        console.log('✅ Analysis result set successfully');
-        
-        // Scroll to analysis result after a short delay
-        setTimeout(() => {
-          const analysisSection = document.querySelector('[key="analysis-result"]');
-          if (analysisSection) {
-            analysisSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
-          setAnalysisProgress('');
-        }, 1500);
-      } else {
-        throw new Error('Phân tích không thành công');
-      }
-
-    } catch (error) {
-      console.error('❌ Error analyzing growth:', error);
-      setAnalysisProgress(`❌ Lỗi: ${error.message}`);
-      setTimeout(() => setAnalysisProgress(''), 5000);
-    } finally {
-      setAnalyzingGrowth(false);
-    }
-  };
 
   const handleDeleteItem = async (id) => {
     if (!confirm('Xóa mục này?')) return;
@@ -621,6 +446,44 @@ function App() {
     }, children);
   };
 
+  const Button = ({ children, onClick, disabled, variant = 'primary', style = {} }) => {
+    const variants = {
+      primary: {
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        color: 'white',
+        boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)'
+      },
+      secondary: {
+        background: 'white',
+        color: '#667eea',
+        border: '2px solid #667eea'
+      },
+      success: {
+        background: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+        color: 'white',
+        boxShadow: '0 4px 15px rgba(56, 239, 125, 0.4)'
+      }
+    };
+
+    return React.createElement('button', {
+      onClick,
+      disabled,
+      style: {
+        padding: '14px 28px',
+        border: 'none',
+        borderRadius: '12px',
+        fontSize: '15px',
+        fontWeight: '600',
+        fontFamily: 'Inter, sans-serif',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        transition: 'all 0.3s ease',
+        opacity: disabled ? 0.6 : 1,
+        ...variants[variant],
+        ...style
+      }
+    }, disabled && variant === 'primary' ? React.createElement('span', { className: 'spinner', style: { marginRight: '8px' } }) : null, children);
+  };
+
   // ===== Stats (Charts) =====
   const topShops = useMemo(() => {
     // compute top 10 shops by count
@@ -828,133 +691,44 @@ function App() {
     }
   }, [topShops, statusDist]);
 
-  // Helper function to format timestamp
-  const formatTime = (timestamp) => {
-    if (!timestamp) return '—';
-    try {
-      const date = new Date(timestamp);
-      
-      // Format as DD/MM/YYYY HH:mm
-      const day = String(date.getDate()).padStart(2, '0');
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const year = date.getFullYear();
-      const hours = String(date.getHours()).padStart(2, '0');
-      const mins = String(date.getMinutes()).padStart(2, '0');
-      const secs = String(date.getSeconds()).padStart(2, '0');
-      
-      return `${day}/${month}/${year} ${hours}:${mins}:${secs}`;
-    } catch (e) {
-      return '—';
-    }
-  };
-
-  const Input = ({ value, onChange, placeholder, type = 'text', style = {}, disabled = false }) => {
+  const Input = ({ value, onChange, placeholder, type = 'text', style = {} }) => {
     return React.createElement('input', {
       type,
       value,
       onChange,
       placeholder,
-      disabled,
       style: {
         width: '100%',
-        padding: '10px 14px',
-        border: '1px solid var(--color-gray-300)',
-        borderRadius: 'var(--radius-md)',
-        fontSize: '14px',
+        padding: '14px 18px',
+        border: '2px solid #e0e0e0',
+        borderRadius: '12px',
+        fontSize: '15px',
         fontFamily: 'Inter, sans-serif',
-        transition: 'all 0.2s ease',
+        transition: 'all 0.3s ease',
         background: 'white',
         outline: 'none',
-        color: 'var(--color-gray-900)',
         ...style
-      },
-      onFocus: (e) => {
-        e.target.style.borderColor = 'var(--color-primary)';
-        e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
-      },
-      onBlur: (e) => {
-        e.target.style.borderColor = 'var(--color-gray-300)';
-        e.target.style.boxShadow = 'none';
       }
     });
   };
 
   const Badge = ({ children, variant = 'primary' }) => {
     const variants = {
-      primary: { bg: 'var(--color-primary-light)', color: 'var(--color-primary)' },
-      success: { bg: '#d1fae5', color: 'var(--color-success)' },
-      error: { bg: '#fee2e2', color: 'var(--color-error)' },
-      warning: { bg: '#fef3c7', color: 'var(--color-warning)' },
-      info: { bg: '#cffafe', color: 'var(--color-info)' }
+      primary: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      success: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+      error: 'linear-gradient(135deg, #eb3349 0%, #f45c43 100%)'
     };
-
-    const selected = variants[variant] || variants.primary;
 
     return React.createElement('span', {
       style: {
         display: 'inline-block',
-        padding: '4px 12px',
-        borderRadius: 'var(--radius-md)',
+        padding: '6px 14px',
+        borderRadius: '20px',
         fontSize: '13px',
         fontWeight: '600',
-        background: selected.bg,
-        color: selected.color,
-        border: `1px solid ${selected.color}20`
-      }
-    }, children);
-  };
-
-  const Button = ({ children, onClick, variant = 'primary', disabled = false, style = {} }) => {
-    const variants = {
-      primary: {
-        bg: 'var(--color-primary)',
-        bgHover: 'var(--color-primary-hover)',
+        background: variants[variant],
         color: 'white',
-        border: 'transparent'
-      },
-      secondary: {
-        bg: 'white',
-        bgHover: 'var(--color-gray-50)',
-        color: 'var(--color-gray-700)',
-        border: 'var(--color-gray-300)'
-      },
-      danger: {
-        bg: 'var(--color-error)',
-        bgHover: '#dc2626',
-        color: 'white',
-        border: 'transparent'
-      }
-    };
-
-    const selected = variants[variant] || variants.primary;
-
-    return React.createElement('button', {
-      onClick: disabled ? undefined : onClick,
-      disabled,
-      style: {
-        padding: '10px 16px',
-        borderRadius: 'var(--radius-md)',
-        fontSize: '14px',
-        fontWeight: '500',
-        fontFamily: 'Inter, sans-serif',
-        border: `1px solid ${selected.border}`,
-        background: disabled ? 'var(--color-gray-200)' : selected.bg,
-        color: disabled ? 'var(--color-gray-500)' : selected.color,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        transition: 'all 0.2s ease',
-        outline: 'none',
-        boxShadow: disabled ? 'none' : 'var(--shadow-sm)',
-        ...style
-      },
-      onMouseEnter: disabled ? undefined : (e) => {
-        e.target.style.background = selected.bgHover;
-        e.target.style.boxShadow = 'var(--shadow-md)';
-        e.target.style.transform = 'translateY(-1px)';
-      },
-      onMouseLeave: disabled ? undefined : (e) => {
-        e.target.style.background = selected.bg;
-        e.target.style.boxShadow = 'var(--shadow-sm)';
-        e.target.style.transform = 'translateY(0)';
+        boxShadow: '0 2px 8px rgba(102, 126, 234, 0.3)'
       }
     }, children);
   };
@@ -963,59 +737,34 @@ function App() {
     'div',
     { style: { fontFamily: 'Inter, sans-serif' } },
     
-    // Header - Professional Design
+    // Header
     React.createElement('div', { 
       style: { 
-        background: 'white',
-        borderRadius: 'var(--radius-xl)',
-        padding: 'var(--space-xl)',
-        marginBottom: 'var(--space-lg)',
-        boxShadow: 'var(--shadow-sm)',
-        border: '1px solid var(--color-gray-200)'
+        textAlign: 'center', 
+        marginBottom: '40px',
+        paddingBottom: '30px',
+        borderBottom: '2px solid #f0f0f0'
       }
     },
-      React.createElement('div', {
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 'var(--space-md)'
+      React.createElement('h1', { 
+        style: { 
+          fontSize: '42px',
+          fontWeight: '700',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+          marginBottom: '8px',
+          letterSpacing: '-1px'
         }
-      }, [
-        React.createElement('div', { key: 'logo-section', style: { display: 'flex', alignItems: 'center', gap: 'var(--space-md)' } }, [
-          React.createElement('div', { 
-            key: 'icon',
-            style: { 
-              fontSize: '32px',
-              lineHeight: 1
-            }
-          }, '📊'),
-          React.createElement('div', { key: 'text' }, [
-            React.createElement('h1', { 
-              key: 'title',
-              style: { 
-                fontSize: '24px',
-                fontWeight: '700',
-                color: 'var(--color-gray-900)',
-                marginBottom: '2px',
-                letterSpacing: '-0.5px'
-              }
-            }, 'TikTok Shop Crawler'),
-            React.createElement('p', { 
-              key: 'subtitle',
-              style: { 
-                fontSize: '14px',
-                color: 'var(--color-gray-500)',
-                fontWeight: '400'
-              }
-            }, 'Professional Data Extraction Platform')
-          ])
-        ]),
-        React.createElement('div', { key: 'stats-badge', style: { display: 'flex', gap: 'var(--space-sm)' } }, [
-          history.length > 0 && React.createElement(Badge, { key: 'total', variant: 'info' }, `${history.length} Products`),
-          Object.keys(shopCounts).length > 0 && React.createElement(Badge, { key: 'shops', variant: 'success' }, `${Object.keys(shopCounts).length} Shops`)
-        ])
-      ])
+      }, '🚀 TikTok Shop Crawler Pro'),
+      React.createElement('p', { 
+        style: { 
+          fontSize: '16px',
+          color: '#666',
+          fontWeight: '400'
+        }
+      }, 'Trích xuất dữ liệu TikTok Shop thông minh và nhanh chóng')
     ),
 
     // Proxy Section
@@ -1205,161 +954,6 @@ function App() {
       ]
     }),
 
-    // Shop Crawl Section
-    React.createElement('div', {
-      key: 'shop-crawl-section',
-      style: {
-        background: 'white',
-        borderRadius: 'var(--radius-xl)',
-        padding: 'var(--space-lg)',
-        marginBottom: 'var(--space-lg)',
-        boxShadow: 'var(--shadow-sm)',
-        border: '1px solid var(--color-gray-200)'
-      }
-    }, [
-      React.createElement('div', {
-        key: 'header',
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-sm)',
-          marginBottom: 'var(--space-md)',
-          paddingBottom: 'var(--space-sm)',
-          borderBottom: '1px solid var(--color-gray-200)'
-        }
-      }, [
-        React.createElement('span', { key: 'icon', style: { fontSize: 24 } }, '🏪'),
-        React.createElement('h3', {
-          key: 'title',
-          style: {
-            fontSize: '16px',
-            fontWeight: '600',
-            color: 'var(--color-gray-900)'
-          }
-        }, 'Crawl tất cả sản phẩm Shop'),
-        React.createElement(Badge, { key: 'new-badge', variant: 'info' }, 'Mới')
-      ]),
-      
-      React.createElement('div', { key: 'content', style: { display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' } }, [
-        // Shop crawl progress bar
-        shopCrawlProgress && React.createElement('div', {
-          key: 'shop-progress-bar',
-          style: {
-            background: shopCrawlProgress.startsWith('❌') ? '#fee2e2' : shopCrawlProgress.startsWith('✅') ? '#dcfce7' : '#dbeafe',
-            border: `1px solid ${shopCrawlProgress.startsWith('❌') ? '#fecaca' : shopCrawlProgress.startsWith('✅') ? '#bbf7d0' : '#bfdbfe'}`,
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-sm)',
-            fontSize: '13px',
-            fontWeight: '500',
-            color: shopCrawlProgress.startsWith('❌') ? '#991b1b' : shopCrawlProgress.startsWith('✅') ? '#166534' : 'var(--color-primary)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-xs)',
-            animation: 'fadeIn 0.3s ease-in'
-          }
-        }, [
-          !shopCrawlProgress.startsWith('✅') && !shopCrawlProgress.startsWith('❌') && React.createElement('div', {
-            key: 'spinner',
-            style: {
-              width: '14px',
-              height: '14px',
-              border: '2px solid var(--color-primary)',
-              borderTopColor: 'transparent',
-              borderRadius: '50%',
-              animation: 'spin 0.6s linear infinite'
-            }
-          }),
-          React.createElement('span', { key: 'text' }, shopCrawlProgress)
-        ]),
-        
-        React.createElement('div', { key: 'shop-url-row' },
-          React.createElement(Input, {
-            value: shopUrl,
-            onChange: e => setShopUrl(e.target.value),
-            placeholder: 'Nhập Shop URL (vd: https://www.tiktok.com/@shopname)',
-            disabled: crawlingShop
-          })
-        ),
-        
-        React.createElement('div', { key: 'amount-api-row', style: { display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 'var(--space-md)' } }, [
-          React.createElement('div', { key: 'amount' },
-            React.createElement('label', {
-              style: {
-                display: 'block',
-                fontSize: '13px',
-                fontWeight: '500',
-                color: 'var(--color-gray-700)',
-                marginBottom: 'var(--space-xs)'
-              }
-            }, 'Số lượng sản phẩm'),
-            React.createElement(Input, {
-              type: 'number',
-              value: shopAmount,
-              onChange: e => setShopAmount(parseInt(e.target.value) || 30),
-              placeholder: '30',
-              disabled: crawlingShop,
-              style: { width: '100%' }
-            })
-          ),
-          React.createElement('div', { key: 'api-key' },
-            React.createElement('label', {
-              style: {
-                display: 'block',
-                fontSize: '13px',
-                fontWeight: '500',
-                color: 'var(--color-gray-700)',
-                marginBottom: 'var(--space-xs)'
-              }
-            }, 'API Key (scrapecreators.com)'),
-            React.createElement('div', { style: { display: 'flex', gap: 'var(--space-sm)' } }, [
-              React.createElement(Input, {
-                key: 'input',
-                value: shopApiKey,
-                onChange: e => setShopApiKey(e.target.value),
-                placeholder: 'Nhập API key...',
-                type: 'password',
-                disabled: crawlingShop,
-                style: { flex: 1 }
-              }),
-              shopApiKey && React.createElement(Button, {
-                key: 'save-btn',
-                onClick: () => {
-                  localStorage.setItem('shopApiKey', shopApiKey);
-                  setShopCrawlProgress('✅ API Key đã được lưu!');
-                  setTimeout(() => setShopCrawlProgress(''), 2000);
-                },
-                variant: 'secondary'
-              }, '💾 Lưu')
-            ])
-          )
-        ]),
-        
-        React.createElement('div', { key: 'info-box', style: { background: 'var(--color-info)/10', padding: 'var(--space-sm)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: 'var(--color-gray-600)' } },
-          '💡 API này sử dụng scrapecreators.com (cost: 1 credit/30 products). Lấy API key tại: ',
-          React.createElement('a', { href: 'https://scrapecreators.com', target: '_blank', style: { color: 'var(--color-primary)', textDecoration: 'underline' } }, 'scrapecreators.com')
-        ),
-        
-        React.createElement('div', { key: 'button-row', style: { display: 'flex', gap: 'var(--space-sm)' } }, [
-          React.createElement(Button, {
-            key: 'crawl-btn',
-            onClick: handleCrawlShop,
-            disabled: crawlingShop || !shopUrl.trim() || !shopApiKey.trim(),
-            variant: 'primary',
-            style: { flex: 1 }
-          }, crawlingShop ? '⏳ Đang crawl shop...' : '🚀 Crawl Shop Products'),
-          
-          shopApiKey && React.createElement(Button, {
-            key: 'save-api',
-            onClick: () => {
-              localStorage.setItem('shopApiKey', shopApiKey);
-              alert('✅ API Key đã được lưu!');
-            },
-            variant: 'secondary'
-          }, '💾 Lưu API Key')
-        ])
-      ])
-    ]),
-
     // Progress Bar
     progress.total > 0 && React.createElement('div', {
       key: 'progress-section',
@@ -1482,24 +1076,27 @@ function App() {
       }, progress.message)
     ),
 
-    // Thống kê - Professional Charts Section
-    React.createElement('div', { key: 'stats', style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)', marginBottom: 'var(--space-lg)' } }, [
+    // Thống kê - Enhanced Charts Section
+    React.createElement('div', { key: 'stats', style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 } }, [
       React.createElement('div', { 
         key: 'card1', 
         style: { 
-          background: 'white', 
-          borderRadius: 'var(--radius-xl)', 
-          padding: 'var(--space-lg)', 
-          border: '1px solid var(--color-gray-200)', 
-          boxShadow: 'var(--shadow-sm)', 
+          background: 'linear-gradient(145deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.7) 100%)', 
+          borderRadius: 16, 
+          padding: 20, 
+          border: '1px solid rgba(102, 126, 234, 0.1)', 
+          boxShadow: '0 10px 40px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.5) inset', 
           minHeight: 300,
-          transition: 'box-shadow 0.3s ease'
+          transition: 'transform 0.3s ease, box-shadow 0.3s ease',
+          cursor: 'default'
         },
         onMouseEnter: (e) => {
-          e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+          e.currentTarget.style.transform = 'translateY(-4px)';
+          e.currentTarget.style.boxShadow = '0 15px 50px rgba(102, 126, 234, 0.15), 0 0 0 1px rgba(255,255,255,0.5) inset';
         },
         onMouseLeave: (e) => {
-          e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0 10px 40px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.5) inset';
         }
       }, [
         React.createElement('div', { 
@@ -1507,24 +1104,26 @@ function App() {
           style: { 
             display: 'flex', 
             alignItems: 'center', 
-            gap: 'var(--space-sm)', 
-            marginBottom: 'var(--space-md)',
-            paddingBottom: 'var(--space-sm)',
-            borderBottom: '1px solid var(--color-gray-200)'
+            gap: 10, 
+            marginBottom: 16,
+            paddingBottom: 12,
+            borderBottom: '2px solid rgba(102, 126, 234, 0.1)'
           } 
         }, [
           React.createElement('span', { 
             key: 'icon', 
             style: { 
-              fontSize: 20
+              fontSize: 24,
+              filter: 'drop-shadow(0 2px 4px rgba(102, 126, 234, 0.3))'
             } 
           }, '📊'),
-          React.createElement('h3', { 
+          React.createElement('div', { 
             key: 't', 
             style: { 
-              fontWeight: 600, 
-              fontSize: 15,
-              color: 'var(--color-gray-900)'
+              fontWeight: 700, 
+              fontSize: 16,
+              color: '#111827',
+              letterSpacing: '0.3px'
             } 
           }, 'Top Shop theo số sản phẩm')
         ]),
@@ -1535,19 +1134,22 @@ function App() {
       React.createElement('div', { 
         key: 'card2', 
         style: { 
-          background: 'white', 
-          borderRadius: 'var(--radius-xl)', 
-          padding: 'var(--space-lg)', 
-          border: '1px solid var(--color-gray-200)', 
-          boxShadow: 'var(--shadow-sm)', 
+          background: 'linear-gradient(145deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.7) 100%)', 
+          borderRadius: 16, 
+          padding: 20, 
+          border: '1px solid rgba(102, 126, 234, 0.1)', 
+          boxShadow: '0 10px 40px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.5) inset', 
           minHeight: 300,
-          transition: 'box-shadow 0.3s ease'
+          transition: 'transform 0.3s ease, box-shadow 0.3s ease',
+          cursor: 'default'
         },
         onMouseEnter: (e) => {
-          e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+          e.currentTarget.style.transform = 'translateY(-4px)';
+          e.currentTarget.style.boxShadow = '0 15px 50px rgba(102, 126, 234, 0.15), 0 0 0 1px rgba(255,255,255,0.5) inset';
         },
         onMouseLeave: (e) => {
-          e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0 10px 40px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.5) inset';
         }
       }, [
         React.createElement('div', { 
@@ -1555,24 +1157,26 @@ function App() {
           style: { 
             display: 'flex', 
             alignItems: 'center', 
-            gap: 'var(--space-sm)', 
-            marginBottom: 'var(--space-md)',
-            paddingBottom: 'var(--space-sm)',
-            borderBottom: '1px solid var(--color-gray-200)'
+            gap: 10, 
+            marginBottom: 16,
+            paddingBottom: 12,
+            borderBottom: '2px solid rgba(102, 126, 234, 0.1)'
           } 
         }, [
           React.createElement('span', { 
             key: 'icon', 
             style: { 
-              fontSize: 20
+              fontSize: 24,
+              filter: 'drop-shadow(0 2px 4px rgba(102, 126, 234, 0.3))'
             } 
           }, '🎯'),
-          React.createElement('h3', { 
+          React.createElement('div', { 
             key: 't', 
             style: { 
-              fontWeight: 600, 
-              fontSize: 15,
-              color: 'var(--color-gray-900)'
+              fontWeight: 700, 
+              fontSize: 16,
+              color: '#111827',
+              letterSpacing: '0.3px'
             } 
           }, 'Phân bố trạng thái gần đây')
         ]),
@@ -1583,9 +1187,9 @@ function App() {
     ]),
 
     // Note input + History controls
-    React.createElement('div', { key: 'note-controls', style: { display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-md)', background: 'white', padding: 'var(--space-md)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-gray-200)' } }, [
+    React.createElement('div', { key: 'note-controls', style: { display: 'flex', gap: 12, marginBottom: 16 } }, [
       React.createElement(Input, { key: 'note', value: note, onChange: e => setNote(e.target.value), placeholder: 'Ghi chú cho lần crawl này (sẽ lưu kèm lịch sử)', style: { flex: 1 } }),
-      React.createElement(Button, { key: 'reload-hist', variant: 'secondary', onClick: loadHistory, disabled: loadingHistory }, loadingHistory ? '⏳ Đang tải...' : '↻ Tải lịch sử')
+      React.createElement(Button, { key: 'reload-hist', variant: 'secondary', onClick: loadHistory }, '↻ Tải lịch sử')
     ]),
 
     // Results Table
@@ -1760,265 +1364,6 @@ function App() {
       )
     ),
 
-    // AI Analysis Section
-    Object.keys(shopCounts).length > 0 && React.createElement('div', {
-      key: 'ai-analysis-section',
-      style: {
-        background: 'white',
-        borderRadius: 'var(--radius-xl)',
-        padding: 'var(--space-lg)',
-        marginTop: 'var(--space-lg)',
-        marginBottom: 'var(--space-lg)',
-        boxShadow: 'var(--shadow-md)',
-        border: '2px solid var(--color-primary)'
-      }
-    }, [
-      React.createElement('div', {
-        key: 'header',
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-sm)',
-          marginBottom: 'var(--space-md)',
-          paddingBottom: 'var(--space-sm)',
-          borderBottom: '1px solid var(--color-gray-200)'
-        }
-      }, [
-        React.createElement('span', { key: 'icon', style: { fontSize: 24 } }, '🤖'),
-        React.createElement('h3', {
-          key: 'title',
-          style: {
-            fontSize: '16px',
-            fontWeight: '600',
-            color: 'var(--color-gray-900)',
-            flex: 1
-          }
-        }, 'Phân tích tăng trưởng với AI'),
-        React.createElement(Badge, { key: 'ai-badge', variant: 'primary' }, 'DeepSeek AI')
-      ]),
-      
-      React.createElement('div', { key: 'content', style: { display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' } }, [
-        // Progress bar
-        analysisProgress && React.createElement('div', {
-          key: 'progress-bar',
-          style: {
-            background: analysisProgress.startsWith('❌') ? '#fee2e2' : analysisProgress.startsWith('✅') ? '#dcfce7' : '#dbeafe',
-            border: `1px solid ${analysisProgress.startsWith('❌') ? '#fecaca' : analysisProgress.startsWith('✅') ? '#bbf7d0' : '#bfdbfe'}`,
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-sm)',
-            fontSize: '13px',
-            fontWeight: '500',
-            color: analysisProgress.startsWith('❌') ? '#991b1b' : analysisProgress.startsWith('✅') ? '#166534' : 'var(--color-primary)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-xs)',
-            animation: 'fadeIn 0.3s ease-in'
-          }
-        }, [
-          !analysisProgress.startsWith('✅') && !analysisProgress.startsWith('❌') && React.createElement('div', {
-            key: 'spinner',
-            style: {
-              width: '14px',
-              height: '14px',
-              border: '2px solid var(--color-primary)',
-              borderTopColor: 'transparent',
-              borderRadius: '50%',
-              animation: 'spin 0.6s linear infinite'
-            }
-          }),
-          React.createElement('span', { key: 'text' }, analysisProgress)
-        ]),
-        
-        React.createElement('div', { key: 'api-key-row' },
-          React.createElement('label', {
-            style: {
-              display: 'block',
-              fontSize: '13px',
-              fontWeight: '500',
-              color: 'var(--color-gray-700)',
-              marginBottom: 'var(--space-xs)'
-            }
-          }, 'DeepSeek API Key'),
-          React.createElement('div', { style: { display: 'flex', gap: 'var(--space-sm)' } }, [
-            React.createElement(Input, {
-              key: 'api-input',
-              value: deepseekApiKey,
-              onChange: e => setDeepseekApiKey(e.target.value),
-              placeholder: 'Nhập DeepSeek API key...',
-              type: 'password',
-              disabled: analyzingGrowth,
-              style: { flex: 1 }
-            }),
-            deepseekApiKey && React.createElement(Button, {
-              key: 'save-btn',
-              onClick: () => {
-                localStorage.setItem('deepseekApiKey', deepseekApiKey);
-                alert('✅ API Key đã được lưu!');
-              },
-              variant: 'secondary'
-            }, '💾 Lưu')
-          ])
-        ),
-        
-        React.createElement('div', { key: 'info-box', style: { background: '#dbeafe', padding: 'var(--space-sm)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: 'var(--color-gray-600)' } },
-          '💡 Lấy API key miễn phí tại: ',
-          React.createElement('a', { href: 'https://platform.deepseek.com', target: '_blank', style: { color: 'var(--color-primary)', textDecoration: 'underline', fontWeight: '500' } }, 'platform.deepseek.com')
-        ),
-        
-        React.createElement('div', { key: 'shops-grid', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 'var(--space-md)' } },
-          Object.entries(shopCounts).map(([shopKey, count]) => {
-            const shopName = history.find(h => (h.shopId || h.shopSlug || h.shopName) === shopKey)?.shopName || shopKey;
-            const shopId = history.find(h => (h.shopId || h.shopSlug || h.shopName) === shopKey)?.shopId;
-            
-            return React.createElement('div', {
-              key: shopKey,
-              style: {
-                background: 'var(--color-gray-50)',
-                border: '1px solid var(--color-gray-200)',
-                borderRadius: 'var(--radius-lg)',
-                padding: 'var(--space-md)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-sm)'
-              }
-            }, [
-              React.createElement('div', { key: 'shop-info' }, [
-                React.createElement('div', { key: 'name', style: { fontWeight: '600', fontSize: '14px', color: 'var(--color-gray-900)', marginBottom: '4px' } }, shopName),
-                React.createElement('div', { key: 'count', style: { fontSize: '13px', color: 'var(--color-gray-500)' } }, `${count} sản phẩm`)
-              ]),
-              React.createElement(Button, {
-                key: 'analyze-btn',
-                onClick: () => handleAnalyzeGrowth(shopName, shopId),
-                disabled: analyzingGrowth || !deepseekApiKey.trim(),
-                variant: 'primary',
-                style: { width: '100%', fontSize: '13px', padding: '8px 12px' }
-              }, analyzingGrowth && selectedShopForAnalysis === shopName ? '⏳ Đang phân tích...' : '📊 Phân tích')
-            ]);
-          })
-        ),
-        
-        analysisResult && React.createElement('div', {
-          key: 'analysis-result',
-          style: {
-            background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-            border: '2px solid var(--color-primary)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 'var(--space-lg)',
-            marginTop: 'var(--space-md)'
-          }
-        }, [
-          React.createElement('div', {
-            key: 'result-header',
-            style: {
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 'var(--space-md)',
-              paddingBottom: 'var(--space-sm)',
-              borderBottom: '1px solid var(--color-primary)'
-            }
-          }, [
-            React.createElement('h4', {
-              key: 'title',
-              style: {
-                fontSize: '16px',
-                fontWeight: '700',
-                color: 'var(--color-primary)'
-              }
-            }, `📈 Phân tích: ${analysisResult.shopInfo?.shopName || 'Shop'}`),
-            React.createElement('button', {
-              key: 'close',
-              onClick: () => setAnalysisResult(null),
-              style: {
-                background: 'transparent',
-                border: 'none',
-                fontSize: '20px',
-                cursor: 'pointer',
-                color: 'var(--color-gray-500)'
-              }
-            }, '×')
-          ]),
-          
-          analysisResult.shopInfo && React.createElement('div', {
-            key: 'shop-growth',
-            style: {
-              background: 'white',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-md)',
-              marginBottom: 'var(--space-md)'
-            }
-          }, [
-            React.createElement('h5', {
-              key: 'title',
-              style: { fontSize: '14px', fontWeight: '600', marginBottom: 'var(--space-sm)', color: 'var(--color-gray-900)' }
-            }, '🏪 Tổng quan Shop'),
-            React.createElement('div', { key: 'stats', style: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--space-sm)', fontSize: '13px' } }, [
-              React.createElement('div', { key: 'growth' }, [
-                React.createElement('span', { style: { color: 'var(--color-gray-600)' } }, 'Tăng trưởng: '),
-                React.createElement('span', { style: { fontWeight: '600', color: 'var(--color-success)' } }, `+${analysisResult.shopInfo.totalGrowth.toLocaleString()} (${analysisResult.shopInfo.growthRate})`)
-              ]),
-              React.createElement('div', { key: 'datapoints' }, [
-                React.createElement('span', { style: { color: 'var(--color-gray-600)' } }, 'Lần theo dõi: '),
-                React.createElement('span', { style: { fontWeight: '600' } }, analysisResult.shopInfo.dataPoints)
-              ])
-            ])
-          ]),
-          
-          analysisResult.topProducts && analysisResult.topProducts.length > 0 && React.createElement('div', {
-            key: 'top-products',
-            style: {
-              background: 'white',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-md)',
-              marginBottom: 'var(--space-md)'
-            }
-          }, [
-            React.createElement('h5', {
-              key: 'title',
-              style: { fontSize: '14px', fontWeight: '600', marginBottom: 'var(--space-sm)', color: 'var(--color-gray-900)' }
-            }, '🔥 Top 10 sản phẩm tăng trưởng mạnh'),
-            React.createElement('div', { key: 'products-list', style: { display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' } },
-              analysisResult.topProducts.map((prod, idx) =>
-                React.createElement('div', {
-                  key: idx,
-                  style: {
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    padding: 'var(--space-xs)',
-                    background: idx % 2 === 0 ? 'var(--color-gray-50)' : 'transparent',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '13px'
-                  }
-                }, [
-                  React.createElement('span', { key: 'name', style: { flex: 1, fontWeight: '500', color: 'var(--color-gray-900)' } }, `${idx + 1}. ${prod.name || prod.productName}`),
-                  React.createElement('span', { key: 'growth', style: { fontWeight: '600', color: prod.totalGrowth >= 0 ? 'var(--color-success)' : '#ef4444' } }, `${prod.totalGrowth >= 0 ? '+' : ''}${prod.totalGrowth.toLocaleString()}`)
-                ])
-              )
-            )
-          ]),
-          
-          React.createElement('div', {
-            key: 'ai-content',
-            style: {
-              background: 'white',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-md)',
-              fontSize: '14px',
-              lineHeight: '1.6',
-              color: 'var(--color-gray-700)',
-              whiteSpace: 'pre-wrap'
-            }
-          }, [
-            React.createElement('h5', {
-              key: 'title',
-              style: { fontSize: '14px', fontWeight: '600', marginBottom: 'var(--space-sm)', color: 'var(--color-gray-900)' }
-            }, '💬 Phân tích từ AI'),
-            analysisResult.aiAnalysis
-          ])
-        ])
-      ])
-    ]),
-
     // History Table (with Group by Shop toggle)
     React.createElement('div', { key: 'hist', style: { marginTop: 20, background: 'rgba(255,255,255,0.7)', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.1)' } }, [
       React.createElement('div', { key: 'hist-head', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 } }, [
@@ -2043,11 +1388,11 @@ function App() {
         React.createElement('div', { key: 'tbl', style: { overflowX: 'auto' } },
           React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0, background: 'white', borderRadius: 12, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.08)' } }, [
             React.createElement('thead', { key: 'th' }, React.createElement('tr', null, [
-              React.createElement('th', { key: 'sel-h', style: { width: 42, background: 'var(--color-primary)', color: '#fff', padding: 14, textAlign: 'center' } },
+              React.createElement('th', { key: 'sel-h', style: { width: 42, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: '#fff', padding: 14, textAlign: 'center' } },
                 React.createElement('input', { type: 'checkbox', checked: history.length > 0 && selectedIds.length === history.length, onChange: toggleSelectAll })
               ),
-              'Link','Shop','Số SP','SP','Đã bán (Shop)','Đã bán (SP)','Thời gian','Note','Hành động'
-            ].map((h, idx) => typeof h === 'string' ? React.createElement('th', { key: 'hh'+idx, style: { background: 'var(--color-primary)', color: '#fff', padding: 14, textAlign: 'left', fontSize: 13, fontWeight: '600', borderLeft: idx===0 ? 'none' : '1px solid rgba(255,255,255,0.2)' } }, h) : h))),
+              'Link','Shop','Số SP','SP','Đã bán (Shop)','Đã bán (SP)','Note','Hành động'
+            ].map((h, idx) => typeof h === 'string' ? React.createElement('th', { key: 'hh'+idx, style: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: '#fff', padding: 14, textAlign: 'left', fontSize: 13, letterSpacing: '0.5px', borderLeft: idx===0 ? 'none' : '1px solid rgba(255,255,255,0.2)' } }, h) : h))),
             React.createElement('tbody', { key: 'tb' }, history.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { background: idx % 2 === 0 ? '#fbfbff' : '#fff', transition: 'background 0.2s', borderBottom: '1px solid #f3f4f6' } }, [
               React.createElement('td', { style: { padding: 12, textAlign: 'center', borderRight: '1px solid #f3f4f6' } },
                 React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
@@ -2062,9 +1407,8 @@ function App() {
               React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.shopName || '—'),
               React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', textAlign: 'center', color: '#111827', fontWeight: 600 } }, (() => { const k = it.shopId || it.shopSlug || it.shopName || 'unknown'; return shopCounts[k] || 1; })()),
               React.createElement('td', { style: { padding: 14, maxWidth: 280, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderLeft: '1px solid #f3f4f6' } }, it.productName || '—'),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', textAlign: 'center' } }, it.shopSold || '—'),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', textAlign: 'center' } }, it.productSold || '—'),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', fontSize: 13, color: 'var(--color-gray-600)', whiteSpace: 'nowrap' }, title: it.createdAt }, formatTime(it.createdAt)),
+              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.shopSold || '—'),
+              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.productSold || '—'),
               React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, (
                 editingId === it.id
                   ? React.createElement('input', { value: editingNote, onChange: e => setEditingNote(e.target.value), style: { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none' } })
@@ -2122,7 +1466,7 @@ function App() {
               ]),
               !collapsedGroups[g.key] && React.createElement('div', { key: 'list', style: { overflowX: 'auto' } },
                 React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0 } }, [
-                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, ['Chọn','Link','Sản phẩm','Đã bán (Shop)','Đã bán (SP)','Thời gian','Note','Hành động'].map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: 'var(--color-gray-100)', color: 'var(--color-gray-700)', padding: 12, textAlign: 'left', fontSize: 13, fontWeight: '600', borderBottom: '1px solid var(--color-gray-200)' } }, h)))),
+                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, ['Chọn','Link','Sản phẩm','Đã bán (Shop)','Đã bán (SP)','Note','Hành động'].map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: '#f9fafb', color: '#374151', padding: 12, textAlign: 'left', fontSize: 13, borderBottom: '1px solid #e5e7eb' } }, h)))),
                   React.createElement('tbody', { key: 'tb' }, g.items.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { borderBottom: '1px solid #f3f4f6' } }, [
                     React.createElement('td', { style: { padding: 12, textAlign: 'center' } },
                       React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
@@ -2135,9 +1479,8 @@ function App() {
                       React.createElement('button', { key: 'copy', onClick: () => copyToClipboard(it.url, it.id), title: 'Copy link', style: { position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '2px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer', opacity: hoveredHistoryId === it.id ? 1 : 0, transition: 'opacity 0.15s ease' } }, copiedId === it.id ? '✅' : '📋')
                     ]),
                     React.createElement('td', { style: { padding: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.productName || '—'),
-                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, it.shopSold || '—'),
-                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, it.productSold || '—'),
-                    React.createElement('td', { style: { padding: 12, fontSize: 13, color: 'var(--color-gray-600)', whiteSpace: 'nowrap' }, title: it.createdAt }, formatTime(it.createdAt)),
+                    React.createElement('td', { style: { padding: 12 } }, it.shopSold || '—'),
+                    React.createElement('td', { style: { padding: 12 } }, it.productSold || '—'),
                     React.createElement('td', { style: { padding: 12 } }, (
                       editingId === it.id
                         ? React.createElement('input', { value: editingNote, onChange: e => setEditingNote(e.target.value), style: { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none' } })

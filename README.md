@@ -1,168 +1,268 @@
-# TikTok Shop Crawler - Deploy Guide
+# 🛍️ TikTok Shop Crawler - Product Tracking & Analytics
 
-This guide helps you deploy:
-- Backend (Express + Puppeteer) to Render using Dockerfile
-- Frontend (React UMD static) to Vercel
+> **Professional tool to crawl TikTok Shop products, track sales growth over time, and get AI-powered insights**
 
-## Backend (Render)
-
-- Root: `backend/` (contains Dockerfile)
-- Build & Run:
-  - Render will build the Docker image using `backend/Dockerfile`.
-  - App listens on `PORT` env (defaults to 5000). Render sets it automatically.
-- Recommended Environment Variables:
-  - `NODE_ENV=production`
-  - `ALLOW_ORIGINS=https://<your-frontend>.vercel.app` (comma-separated for multiple)
-  - Optional: `HM_CAPTCHA_API_KEY` if you want a default; the UI can still pass it per request.
-- Persistent data:
-  - History is stored in `backend/data/history.json`. Attach a Render Persistent Disk and mount to `/app/backend/data` if you need persistence across restarts.
-- Health checks:
-  - `GET /health` -> `ok`
-  - `GET /api/health` -> JSON status
-
-## Frontend (Vercel)
-
-- Root: `frontend/`
-- Static hosting (no build step required). Ensure `index.html` and `app.js` are present.
-- Backend URL:
-  - The app calls relative `/api/...`. For cross-origin deployment, set a reverse proxy or add a UI field to configure base URL.
-  - Optionally, add a custom domain or Vercel rewrite to forward `/api` to your Render backend.
-
-## CORS
-
-The backend enables CORS with credentials for:
-- `*.trycloudflare.com`
-- `*.vercel.app`
-- `http://localhost:<port>`
-- Additional origins can be added via `ALLOW_ORIGINS` env.
-
-## Dockerfile notes
-
-- Base image: `node:20-bookworm-slim`
-- Installs system libs required by Chromium for Puppeteer.
-- `npm ci --omit=dev`
-- Exposes `5000` but uses `PORT` at runtime.
-
-## Troubleshooting
-
-- If Chromium missing dependency: update `backend/Dockerfile` with the required package and redeploy.
-- If CORS blocked on Vercel domain: add it to `ALLOW_ORIGINS` on Render.
-- If history not persisting on Render free tier: attach a Persistent Disk.
-
-## Scripts
-
-Backend: `npm start` in `backend/` runs `index.js`.
+[![Production Ready](https://img.shields.io/badge/status-production%20ready-success)](./PRODUCTION_READINESS.md)
+[![Docker](https://img.shields.io/badge/docker-compose-blue)](./docker-compose.yml)
+[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 ---
 
-Happy crawling!# 🚀 TikTok Shop Crawler - CHỈ DÙNG HMCAPTCHA
+## ✨ Features
 
-## ⚡ Tính năng chính
+### 🔍 Product Crawling
+- **Single/Batch Crawl**: Crawl 1 hoặc nhiều TikTok Shop products
+- **Automatic Data Extraction**: Tên, giá, sold count, rating, images
+- **Proxy Support**: US residential proxies để bypass geo-restrictions
+- **Stealth Mode**: Puppeteer stealth plugin tránh detection
 
-### ✅ CAPTCHA Solver
-- **CHỈ hỗ trợ:** hmcaptcha.com
-- **Các loại CAPTCHA:**
-  - 🧩 Slide CAPTCHA (trượt ghép mảnh)
-  - 🎯 Select 2 Objects (chọn 2 đối tượng giống nhau)
-  - 🔄 Rotate CAPTCHA App (xoay ảnh trên app)
-  - 🔄 Rotate CAPTCHA Web (xoay ảnh trên web)
-- **Auto-detection:** Tự động nhận diện loại captcha
-- **Auto-solving:** Tự động giải và thực hiện action
+### 📊 Growth Tracking
+- **Historical Data**: Track sold count qua thời gian
+- **Timestamp Recording**: Mỗi crawl có timestamp (DD/MM/YYYY HH:mm:ss)
+- **Trend Analysis**: Xem sản phẩm nào đang trending
 
-### ✅ Proxy Support
-- ✅ Format: `host:port:username:password`
-- ✅ Authentication tự động
-- ✅ Check IP trước khi crawl
-- ✅ Phát hiện datacenter proxy
+### 🤖 AI Analysis (DeepSeek)
+- **Smart Insights**: AI phân tích growth trends
+- **Top Performers**: Identify sản phẩm bán chạy nhất
+- **Recommendations**: AI đề xuất chiến lược
 
-### ✅ Chống phát hiện bot
-- ✅ Puppeteer-extra + Stealth plugin
-- ✅ Override automation flags
-- ✅ Random delays
-- ✅ Human-like behavior
+### 🏪 Shop Bulk Crawl
+- **Entire Shop**: Crawl tất cả products của 1 shop
+- **ScapeCreators API**: Integration sẵn
+- **Fast & Efficient**: Bulk import vào database
 
-### ✅ Multi-tier Extraction
-1. **API Interception** (fastest)
-2. **DOM Extraction** (most reliable)
-3. **JSON Parsing** (fallback)
-4. **Cheerio Parsing** (last resort)
+### 💎 Professional UI
+- **Clean Design**: Modern, responsive interface
+- **Progress Tracking**: Real-time progress bars (no popups!)
+- **Error Handling**: User-friendly error messages
+- **Dark Theme Ready**: Professional color scheme
 
-## 🔧 Cách sử dụng
+---
 
-### Bước 1: Chuẩn bị API Key từ hmcaptcha.com
-1. Truy cập: https://hmcaptcha.com
-2. Đăng ký tài khoản
-3. Nạp tiền (tùy chọn theo nhu cầu)
-4. Copy API Key từ dashboard
+## 🚀 Quick Start
 
-### Bước 2: Chạy Backend
+### Option 1: Docker Compose (Khuyên dùng)
+
 ```bash
-cd "c:\Users\TIEN DUNG\Documents\TikTokShop\backend"
-node index.js
-```
-**Kết quả:** `Backend running on port 5000`
+# Clone repo
+git clone https://github.com/seringuyen0506-svg/shoptiktok1.git
+cd shoptiktok1
 
-### Bước 3: Chạy Frontend
+# Configure environment
+cp .env.example .env
+nano .env  # Edit ALLOW_ORIGINS
+
+# Start services
+docker compose up -d
+
+# Access app
+open http://localhost
+```
+
+### Option 2: Manual Setup
+
 ```bash
-cd "c:\Users\TIEN DUNG\Documents\TikTokShop\frontend"
-node server.js
-```
-**Kết quả:** `Frontend server running at http://localhost:3000`
+# Install dependencies
+cd backend && npm install
+cd ../frontend && npm install
 
-### Bước 4: Mở Web UI
-Truy cập: **http://localhost:3000**
+# Start backend
+cd backend
+PORT=5000 node index.js
 
-### Bước 5: Nhập thông tin
+# Start frontend (new terminal)
+cd frontend
+PORT=3000 node unified-server.js
 
-#### 🔒 Proxy (tùy chọn)
-```
-Format: host:port:username:password
-Ví dụ: 43.159.20.117:12233:user-ZP85NKvw:SgcjjxXh
-```
-- Click **🔍 Check IP** để xác thực proxy
-- Nếu là datacenter proxy, sẽ có cảnh báo
-
-#### 🔑 API Key hmcaptcha.com
-```
-Paste API key của bạn vào đây
-```
-- Click **Lưu API Key**
-- Click **🔑 Check API Key** để xác thực
-- Nếu hợp lệ sẽ hiển thị balance và total tasks
-
-#### 📝 Links TikTok (mỗi link 1 dòng)
-```
-https://www.tiktok.com/@shopname/product/123456
-https://vm.tiktok.com/ZSjAbCdEf/
+# Access app
+open http://localhost:3000
 ```
 
-### Bước 6: Click "Crawl"
-- ⏱️ Đợi 10-30 giây cho mỗi link
-- 📊 Kết quả hiển thị real-time trong bảng
-- 🔄 Nếu gặp CAPTCHA, tự động giải bằng hmcaptcha
+---
 
-## 📊 Kết quả mong đợi
+## 📖 Documentation
 
-| Link | Trạng thái | Tên shop | Sold shop | Tên sản phẩm | Sold sản phẩm |
-|------|-----------|----------|-----------|--------------|---------------|
-| https://... | success | Shop ABC | 1000+ | Product XYZ | 50 bán |
-| https://... | captcha_solved | Shop DEF | 500+ | Product GHI | 120 bán |
+- **[Deployment Guide](./DEPLOYMENT_GUIDE.md)** - Full deployment instructions
+- **[Production Readiness](./PRODUCTION_READINESS.md)** - Complete system audit
+- **[Quick Start](./QUICKSTART.md)** - Get started in 5 minutes
+- **[API Documentation](./API_DOCS.md)** - Backend API reference
 
-## 🐛 Debug
+---
 
-### Nếu không crawl được:
+## 🛠️ Tech Stack
 
-1. **Kiểm tra file log:**
-   - `backend/html_log.txt` - HTML của trang
-   - `backend/screenshot_debug.png` - Screenshot trang
+### Backend
+- **Node.js** + **Express** - API server
+- **Puppeteer** - Web scraping with headless Chrome
+- **Puppeteer Stealth** - Anti-detection
+- **Axios** - HTTP client cho external APIs
+- **Cheerio** - HTML parsing
 
-2. **Check console backend:**
-   - Xem có lỗi gì không
-   - Kiểm tra có captcha không
+### Frontend
+- **React** (UMD) - UI framework
+- **CSS Variables** - Professional theming
+- **LocalStorage** - API key persistence
 
-3. **Thử không dùng proxy:**
-   - Để trống proxy field
-   - Test xem có crawl được không
+### Deployment
+- **Docker** + **docker-compose** - Containerization
+- **Nginx** - Reverse proxy
+- **PM2** - Process manager (alternative)
+- **Cloudflare Tunnel** - Secure tunneling (optional)
+
+---
+
+## 🔧 Configuration
+
+### Environment Variables
+
+```bash
+# Backend
+ALLOW_ORIGINS=https://yourdomain.com,http://localhost:3000
+PORT=5000
+NODE_ENV=production
+
+# Frontend
+PORT=3000
+```
+
+### API Keys (User Input Only)
+
+**DeepSeek AI** (for growth analysis):
+- Get key: https://platform.deepseek.com
+- Nhập qua UI
+- Saved in browser localStorage
+
+**ScapeCreators** (for shop bulk crawl):
+- Get key: https://scrapecreators.com
+- Nhập qua UI  
+- Saved in browser localStorage
+
+⚠️ **Note**: ScapeCreators API hiện có bug. See [SCRAPECREATORS_API_ISSUE_FINAL.md](./SCRAPECREATORS_API_ISSUE_FINAL.md)
+
+---
+
+## 📸 Screenshots
+
+### Main Dashboard
+![Dashboard](./screenshots/dashboard.png)
+
+### AI Analysis
+![AI Analysis](./screenshots/ai-analysis.png)
+
+---
+
+## 🧪 Testing
+
+### Backend Health Check
+```bash
+curl http://localhost:5000/health
+# Response: ok
+
+curl http://localhost:5000/api/health
+# Response: {"status":"ok","timestamp":"...","service":"TikTok Shop Crawler API"}
+```
+
+### Test Crawl
+```bash
+# Run test suite
+cd backend
+node test-endpoints.js
+```
+
+---
+
+## 🚨 Known Issues
+
+### 1. ScapeCreators API
+- **Status**: External API có bug `initialProducts is not iterable`
+- **Workaround**: Đang chờ provider fix hoặc dùng alternative API
+- **Details**: [SCRAPECREATORS_API_ISSUE_FINAL.md](./SCRAPECREATORS_API_ISSUE_FINAL.md)
+
+### 2. TikTok Geo-Restrictions
+- **Issue**: Error 23002102 khi crawl không có US proxy
+- **Solution**: Dùng US residential proxies
+- **Format**: `host:port:username:password`
+
+### 3. Rate Limiting
+- **Issue**: TikTok có thể block nếu crawl quá nhiều
+- **Solution**: Use delays giữa các requests, rotate proxies
+
+---
+
+## � Project Structure
+
+```
+TikTokShop/
+├── backend/
+│   ├── index.js              # Main API server (2707 lines)
+│   ├── package.json          # Dependencies
+│   ├── Dockerfile            # Production Docker image
+│   └── data/
+│       └── history.json      # Persisted crawl data
+├── frontend/
+│   ├── app.js                # React UI (2155 lines)
+│   ├── index.html            # Entry point
+│   ├── unified-server.js     # Express + proxy
+│   └── package.json          # Dependencies
+├── infra/
+│   └── nginx/
+│       ├── nginx.conf        # HTTP config
+│       └── nginx.https.conf  # HTTPS config
+├── docker-compose.yml        # Development setup
+├── docker-compose.prod.yml   # Production + HTTPS
+├── .env.example              # Environment template
+├── DEPLOYMENT_GUIDE.md       # Full deployment guide
+└── PRODUCTION_READINESS.md   # System audit report
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please:
+1. Fork the repo
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Open Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Credits
+
+- **Puppeteer** - Headless Chrome automation
+- **DeepSeek** - AI analysis API
+- **ScapeCreators** - TikTok scraping API
+- **hmcaptcha.com** - CAPTCHA solving service
+
+---
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/seringuyen0506-svg/shoptiktok1/issues)
+- **Documentation**: See `/docs` folder
+- **Email**: [Your contact]
+
+---
+
+## ⭐ Star History
+
+If you find this project helpful, please give it a star! ⭐
+
+---
+
+**Made with ❤️ for TikTok Shop sellers**
+
+**Version**: 1.0.0  
+**Status**: ✅ Production Ready  
+**Last Updated**: October 22, 2025
+
 
 4. **Kiểm tra link TikTok:**
    - Đảm bảo link đúng format

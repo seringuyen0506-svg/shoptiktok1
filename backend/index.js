@@ -1272,6 +1272,487 @@ app.post('/api/captcha-dry-run', async (req, res) => {
   }
 });
 
+// Crawl Shop Products - using scrapecreators API
+app.post('/api/crawl-shop', async (req, res) => {
+  const { shopUrl, amount = 30, apiKey, note } = req.body;
+  
+  if (!shopUrl) {
+    return res.status(400).json({ error: 'shopUrl is required' });
+  }
+  
+  if (!apiKey) {
+    return res.status(400).json({ error: 'API key is required for scrapecreators.com' });
+  }
+  
+  // Validate shop URL format - scrapecreators REQUIRES /shop/store/ format
+  const trimmedUrl = shopUrl.trim();
+  if (!trimmedUrl.includes('/shop/store/')) {
+    return res.status(400).json({ 
+      error: 'ScapeCreators API requires /shop/store/ URL format',
+      example: 'https://www.tiktok.com/shop/store/shopname/123456',
+      hint: 'Use full TikTok Shop Store URL, not @username format'
+    });
+  }
+
+  try {
+    console.log(`🏪 [Shop Crawl] URL: ${shopUrl}`);
+    console.log(` [Shop Crawl] API Key: ${apiKey.substring(0, 10)}...`);
+    
+    // Extract shop ID from URL if it's a full store URL
+    // Format: https://www.tiktok.com/shop/store/shopname/SHOP_ID
+    let shopIdentifier = shopUrl.trim();
+    const storeMatch = shopUrl.match(/\/shop\/store\/([^\/]+)\/(\d+)/);
+    if (storeMatch) {
+      shopIdentifier = storeMatch[2]; // Use shop ID
+      console.log(`🔍 [Shop Crawl] Extracted Shop ID: ${shopIdentifier}`);
+    } else {
+      // Try to extract @username format
+      const usernameMatch = shopUrl.match(/@([^\/\?]+)/);
+      if (usernameMatch) {
+        shopIdentifier = usernameMatch[1];
+        console.log(`🔍 [Shop Crawl] Extracted Username: ${shopIdentifier}`);
+      }
+    }
+    
+    // Prepare request
+    const requestConfig = {
+      method: 'GET',
+      url: `https://api.scrapecreators.com/v1/tiktok/shop/products`,
+      headers: {
+        'x-api-key': apiKey.trim(),
+        'Accept': 'application/json'
+      },
+      params: {
+        url: shopIdentifier
+      },
+      timeout: 120000, // 2 minutes
+      validateStatus: function (status) {
+        return status >= 200 && status < 600; // Don't throw on any status
+      }
+    };
+    
+    console.log(`📡 [Shop Crawl] Calling API with url parameter: ${shopIdentifier}`);
+    
+    // Call scrapecreators API
+    const response = await axios(requestConfig);
+    
+    console.log(`📥 [Shop Crawl] Response status: ${response.status}`);
+    
+    // Handle non-200 responses
+    if (response.status !== 200) {
+      console.error(`❌ [Shop Crawl] API error ${response.status}:`, response.data);
+      
+      let errorMessage = 'API request failed';
+      if (response.data?.message) {
+        errorMessage = response.data.message;
+      } else if (response.data?.error) {
+        errorMessage = response.data.error;
+      } else if (response.status === 401) {
+        errorMessage = 'Invalid API key';
+      } else if (response.status === 402) {
+        errorMessage = 'Out of credits - Please buy more credits at scrapecreators.com';
+      } else if (response.status === 403) {
+        errorMessage = 'Access denied - check API key permissions';
+      } else if (response.status === 429) {
+        errorMessage = 'Rate limit exceeded - please wait';
+      } else if (response.status === 500) {
+        // Special handling for 500 with 'initialProducts' error
+        if (response.data?.message?.includes('initialProducts')) {
+          errorMessage = 'ScapeCreators API error: Cannot crawl this shop. Try a different shop or contact adrian@thewebscrapingguy.com';
+        } else {
+          errorMessage = 'API server error - try again later or contact support';
+        }
+      }
+      
+      throw new Error(errorMessage);
+    }
+
+    if (!response.data || !response.data.success) {
+      console.error('❌ [Shop Crawl] API returned unsuccessful response:', response.data);
+      throw new Error(response.data?.error || 'API returned unsuccessful response');
+    }
+
+    const { shopInfo, products } = response.data;
+    
+    if (!shopInfo || !products) {
+      console.error('❌ [Shop Crawl] Missing shopInfo or products in response');
+      throw new Error('Invalid API response structure');
+    }
+    
+    console.log(`✅ [Shop Crawl] Shop: ${shopInfo.shop_name}`);
+    console.log(`✅ [Shop Crawl] Sold: ${shopInfo.format_sold_count || shopInfo.sold_count}`);
+    console.log(`✅ [Shop Crawl] Products fetched: ${products.length}`);
+
+    // Save each product to history
+    const savedProducts = [];
+    for (const product of products) {
+      try {
+        const productUrl = product.seo_url?.canonical_url || `https://www.tiktok.com/shop/product/${product.product_id}`;
+        const shopSold = shopInfo.sold_count || shopInfo.format_sold_count || '';
+        const productSold = product.sold_info?.sold_count || '';
+        const productPrice = product.product_price_info?.sale_price_format || '';
+        
+        const historyItem = upsertHistoryItem({
+          url: productUrl,
+          shopName: shopInfo.shop_name,
+          shopSold: String(shopSold),
+          productName: product.title,
+          productSold: String(productSold),
+          note: note || `Crawled from shop: ${shopInfo.shop_name}`,
+          shopId: shopInfo.seller_id,
+          shopSlug: shopInfo.shop_name.toLowerCase().replace(/\s+/g, '-')
+        });
+
+        savedProducts.push({
+          id: historyItem.id,
+          url: productUrl,
+          shopName: shopInfo.shop_name,
+          productName: product.title,
+          shopSold: String(shopSold),
+          productSold: String(productSold),
+          price: productPrice,
+          rating: product.rate_info?.score || null,
+          reviewCount: product.rate_info?.review_count || null,
+          image: product.image?.url_list?.[0] || null
+        });
+      } catch (err) {
+        console.error(`⚠️ Error saving product ${product.product_id}:`, err.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      shopInfo: {
+        name: shopInfo.shop_name,
+        soldCount: shopInfo.sold_count,
+        rating: shopInfo.shop_rating,
+        followers: shopInfo.followers_count,
+        productCount: shopInfo.on_sell_product_count,
+        logo: shopInfo.shop_logo?.url_list?.[0]
+      },
+      products: savedProducts,
+      totalSaved: savedProducts.length
+    });
+
+  } catch (error) {
+    console.error('❌ [Shop Crawl] Error:', error.message);
+    
+    if (error.response) {
+      console.error('❌ [Shop Crawl] Response status:', error.response.status);
+      console.error('❌ [Shop Crawl] Response data:', JSON.stringify(error.response.data, null, 2));
+      
+      // API returned error response
+      return res.status(error.response.status || 500).json({
+        error: `API Error: ${error.response.data?.error || error.response.data?.message || error.message}`,
+        details: error.response.data,
+        hint: 'Check API documentation at https://scrapecreators.com/docs'
+      });
+    }
+    
+    if (error.code === 'ECONNABORTED') {
+      return res.status(408).json({ 
+        error: 'Request timeout - API took too long to respond',
+        hint: 'Try with fewer products or try again later'
+      });
+    }
+    
+    return res.status(500).json({ 
+      error: error.message,
+      hint: 'Verify: 1) API key is valid, 2) Shop URL format is correct, 3) You have sufficient credits'
+    });
+  }
+});
+
+// Analyze shop/products growth with DeepSeek AI
+app.post('/api/analyze-growth', async (req, res) => {
+  const { shopId, shopName, deepseekApiKey } = req.body;
+  
+  console.log('📊 [Analyze Growth] Request received:', { shopId, shopName, hasApiKey: !!deepseekApiKey });
+  
+  if (!shopId && !shopName) {
+    return res.status(400).json({ error: 'shopId or shopName is required' });
+  }
+  
+  if (!deepseekApiKey) {
+    return res.status(400).json({ error: 'DeepSeek API key is required' });
+  }
+
+  try {
+    console.log(`📊 [Step 1] Analyzing growth for shop: ${shopName || shopId}`);
+    
+    // Get all history items for this shop
+    const historyData = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8'));
+    
+    // Handle both formats: array or object with items
+    let items;
+    if (Array.isArray(historyData)) {
+      items = historyData;
+    } else if (historyData.items && Array.isArray(historyData.items)) {
+      items = historyData.items;
+    } else {
+      items = [];
+    }
+    
+    console.log(`📊 [Step 2] Total history items: ${items.length}`);
+    
+    const shopItems = items.filter(item => {
+      if (shopId) return item.shopId === shopId;
+      if (shopName) return item.shopName === shopName;
+      return false;
+    });
+
+    console.log(`📊 [Step 3] Shop items found: ${shopItems.length}`);
+
+    if (shopItems.length === 0) {
+      return res.status(404).json({ error: 'No data found for this shop' });
+    }
+
+    // Group by product and collect snapshots
+    const productAnalysis = {};
+    let shopSoldHistory = [];
+    
+    for (const item of shopItems) {
+      const productKey = item.url;
+      
+      if (!productAnalysis[productKey]) {
+        productAnalysis[productKey] = {
+          productName: item.productName,
+          url: item.url,
+          snapshots: []
+        };
+      }
+      
+      // Add main record (parse to number immediately)
+      if (item.createdAt) {
+        const productSoldNum = parseInt(parseSold(item.productSold) || '0', 10);
+        const shopSoldNum = parseInt(parseSold(item.shopSold) || '0', 10);
+        
+        productAnalysis[productKey].snapshots.push({
+          date: item.createdAt,
+          productSold: productSoldNum,
+          shopSold: shopSoldNum
+        });
+        
+        // Collect shop sold data from main record
+        shopSoldHistory.push({
+          date: item.createdAt,
+          sold: shopSoldNum
+        });
+      }
+      
+      // Add historical snapshots (if they exist)
+      if (item.snapshots && Array.isArray(item.snapshots)) {
+        for (const snap of item.snapshots) {
+          const snapProductSold = typeof snap.productSold === 'number' 
+            ? snap.productSold 
+            : parseInt(parseSold(snap.productSold) || '0', 10);
+          const snapShopSold = typeof snap.shopSold === 'number'
+            ? snap.shopSold
+            : parseInt(parseSold(snap.shopSold) || '0', 10);
+          
+          productAnalysis[productKey].snapshots.push({
+            date: snap.createdAt || snap.date,
+            productSold: snapProductSold,
+            shopSold: snapShopSold
+          });
+          
+          // Also collect shop sold from snapshots
+          shopSoldHistory.push({
+            date: snap.createdAt || snap.date,
+            sold: snapShopSold
+          });
+        }
+      }
+    }
+
+    // Sort snapshots by date
+    for (const key in productAnalysis) {
+      productAnalysis[key].snapshots.sort((a, b) => 
+        new Date(a.date) - new Date(b.date)
+      );
+    }
+    
+    shopSoldHistory.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Prepare data summary for AI
+    const productSummaries = Object.values(productAnalysis).map(p => {
+      const snaps = p.snapshots.filter(s => s.productSold != null && !isNaN(s.productSold));
+      
+      // Need at least 1 snapshot to show product data
+      if (snaps.length === 0) return null;
+      
+      const first = snaps[0];
+      const last = snaps[snaps.length - 1];
+      const growth = last.productSold - first.productSold;
+      
+      // Calculate growth rate (handle edge cases)
+      let growthRate = 'N/A';
+      if (snaps.length >= 2 && first.productSold > 0) {
+        growthRate = ((growth / first.productSold) * 100).toFixed(1) + '%';
+      } else if (snaps.length === 1) {
+        growthRate = 'Chưa đủ dữ liệu';
+      }
+      
+      return {
+        name: p.productName,
+        firstCrawl: { date: first.date, sold: first.productSold },
+        lastCrawl: { date: last.date, sold: last.productSold },
+        totalGrowth: growth,
+        growthRate: growthRate,
+        dataPoints: snaps.length
+      };
+    }).filter(Boolean);
+
+    // Shop growth summary
+    let shopGrowth = null;
+    
+    // Remove duplicates and sort by date
+    const uniqueShopHistory = [];
+    const seenDates = new Set();
+    for (const item of shopSoldHistory) {
+      const dateKey = new Date(item.date).toISOString();
+      if (!seenDates.has(dateKey)) {
+        seenDates.add(dateKey);
+        uniqueShopHistory.push(item);
+      }
+    }
+    
+    if (uniqueShopHistory.length >= 1) {
+      const first = uniqueShopHistory[0];
+      const last = uniqueShopHistory[uniqueShopHistory.length - 1];
+      const growth = last.sold - first.sold;
+      
+      let growthRate = 'N/A';
+      if (uniqueShopHistory.length >= 2 && first.sold > 0) {
+        growthRate = ((growth / first.sold) * 100).toFixed(1) + '%';
+      } else if (uniqueShopHistory.length === 1) {
+        growthRate = 'Chưa đủ dữ liệu';
+      }
+      
+      shopGrowth = {
+        shopName: shopName || shopId,
+        firstCrawl: { date: first.date, sold: first.sold },
+        lastCrawl: { date: last.date, sold: last.sold },
+        totalGrowth: growth,
+        growthRate: growthRate,
+        dataPoints: uniqueShopHistory.length
+      };
+    }
+
+    // Create prompt for DeepSeek
+    const hasMultipleDataPoints = shopGrowth && shopGrowth.dataPoints >= 2;
+    const productsWithGrowth = productSummaries.filter(p => p.dataPoints >= 2);
+    
+    const prompt = `Bạn là chuyên gia phân tích dữ liệu TikTok Shop. ${hasMultipleDataPoints ? 'Phân tích dữ liệu sau và đưa ra nhận xét chi tiết' : 'Đây là lần crawl đầu tiên, hãy đánh giá hiện trạng và đưa ra khuyến nghị'}:
+
+THÔNG TIN SHOP:
+${shopGrowth ? `
+- Tên shop: ${shopGrowth.shopName}
+- Lần crawl đầu: ${new Date(shopGrowth.firstCrawl.date).toLocaleString('vi-VN')} - Đã bán: ${shopGrowth.firstCrawl.sold.toLocaleString()}
+${shopGrowth.dataPoints >= 2 ? `- Lần crawl mới nhất: ${new Date(shopGrowth.lastCrawl.date).toLocaleString('vi-VN')} - Đã bán: ${shopGrowth.lastCrawl.sold.toLocaleString()}
+- Tăng trưởng: ${shopGrowth.totalGrowth >= 0 ? '+' : ''}${shopGrowth.totalGrowth.toLocaleString()} sản phẩm (${shopGrowth.growthRate})` : `- Trạng thái: Đang theo dõi, chưa có dữ liệu tăng trưởng`}
+- Số lần theo dõi: ${shopGrowth.dataPoints}
+` : 'Không đủ dữ liệu shop'}
+
+${productsWithGrowth.length > 0 ? `TOP SẢN PHẨM TĂNG TRƯỞNG MẠNH (${productsWithGrowth.length} sản phẩm có data):` : `DANH SÁCH SẢN PHẨM (${productSummaries.length} sản phẩm):`}
+${productSummaries
+  .sort((a, b) => b.totalGrowth - a.totalGrowth)
+  .slice(0, 10)
+  .map((p, i) => `
+${i + 1}. ${p.name}
+   - Lần đầu: ${new Date(p.firstCrawl.date).toLocaleDateString('vi-VN')} - ${p.firstCrawl.sold.toLocaleString()} đã bán
+   ${p.dataPoints >= 2 ? `- Lần cuối: ${new Date(p.lastCrawl.date).toLocaleDateString('vi-VN')} - ${p.lastCrawl.sold.toLocaleString()} đã bán
+   - Tăng trưởng: ${p.totalGrowth >= 0 ? '+' : ''}${p.totalGrowth.toLocaleString()} (${p.growthRate})` : `- Trạng thái: Đang theo dõi`}
+`)
+  .join('\n')}
+
+YÊU CẦU PHÂN TÍCH:
+${hasMultipleDataPoints ? `
+1. Đánh giá xu hướng tăng trưởng của shop qua ${shopGrowth.dataPoints} lần theo dõi
+2. Xác định sản phẩm có tiềm năng cao nhất (tốc độ tăng trưởng)
+3. Khuyến nghị chiến lược để tối ưu doanh số
+4. Phân tích điểm mạnh và cơ hội cải thiện` : `
+1. Đánh giá hiện trạng shop dựa trên dữ liệu hiện tại
+2. Nhận xét về danh mục sản phẩm và số lượng đã bán
+3. Đề xuất chiến lược để theo dõi và tối ưu trong tương lai
+4. Khuyến nghị crawl thêm để có dữ liệu phân tích tăng trưởng`}
+
+QUAN TRỌNG: Trả lời bằng văn bản thuần (plain text), KHÔNG dùng markdown, KHÔNG dùng ký hiệu đặc biệt như thăng (#), sao (*), hoặc bất kỳ format đánh dấu nào. Viết bằng tiếng Việt, ngắn gọn (300-500 từ), chia thành các đoạn văn rõ ràng.`;
+
+    console.log('🤖 Calling DeepSeek AI...');
+    console.log(`🤖 [Step 4] Prompt length: ${prompt.length} chars`);
+    console.log(`🤖 [Step 5] Product summaries count: ${productSummaries.length}`);
+
+    // Call DeepSeek API
+    const aiResponse = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: 'Bạn là chuyên gia phân tích dữ liệu thương mại điện tử, chuyên về TikTok Shop. Phân tích dữ liệu một cách chuyên nghiệp, ngắn gọn và đưa ra insight có giá trị.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 2000
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${deepseekApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+
+    console.log('✅ [Step 6] DeepSeek API response received');
+    const analysis = aiResponse.data.choices[0].message.content;
+    console.log(`✅ [Step 7] Analysis length: ${analysis.length} chars`);
+
+    return res.json({
+      success: true,
+      shopInfo: shopGrowth,
+      topProducts: productSummaries.sort((a, b) => b.totalGrowth - a.totalGrowth).slice(0, 10),
+      aiAnalysis: analysis,
+      dataPoints: {
+        totalProducts: Object.keys(productAnalysis).length,
+        productsWithGrowth: productSummaries.length,
+        shopDataPoints: shopSoldHistory.length
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ [ERROR] Error analyzing growth:', error.message);
+    console.error('❌ [ERROR] Stack:', error.stack);
+    
+    if (error.response) {
+      console.error('❌ [ERROR] DeepSeek API Response Status:', error.response.status);
+      console.error('❌ [ERROR] DeepSeek API Response Data:', JSON.stringify(error.response.data));
+      return res.status(error.response.status).json({
+        error: `DeepSeek API Error: ${error.response.data?.error?.message || error.message}`,
+        details: error.response.data
+      });
+    }
+    
+    if (error.code === 'ECONNABORTED') {
+      return res.status(408).json({ 
+        error: 'Request timeout - DeepSeek API took too long to respond',
+        hint: 'Try again or check your internet connection'
+      });
+    }
+    
+    return res.status(500).json({ 
+      error: error.message,
+      hint: 'Check server logs for details. Verify DeepSeek API key is valid.'
+    });
+  }
+});
+
 // Crawl endpoint
 app.post('/api/crawl', async (req, res) => {
   const { links, proxy, apiKey, note, prefs } = req.body;
