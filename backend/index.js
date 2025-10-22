@@ -1307,6 +1307,33 @@ app.post('/api/crawl', async (req, res) => {
       // Random delay giữa các request (1-3s) to stagger workers
       await randomDelay(1000, 3000);
       
+      // ✅ STEP 1: VERIFY PROXY HOẠT ĐỘNG (nếu có)
+      if (proxy) {
+        try {
+          const agent = buildProxyAgent(proxy);
+          if (agent) {
+            console.log('🔌 Verifying proxy connection...');
+            const ipCheck = await axios.get('https://api.ipify.org?format=json', {
+              httpsAgent: agent,
+              timeout: 10000
+            }).catch(e => {
+              throw new Error(`Proxy connection failed: ${e.message}`);
+            });
+            console.log(`✅ Proxy verified - IP: ${ipCheck.data.ip}`);
+          }
+        } catch (proxyError) {
+          console.error('❌ Proxy verification failed:', proxyError.message);
+          results.push({
+            url,
+            status: 'proxy_failed',
+            reason: 'proxy',
+            message: `Proxy không hoạt động: ${proxyError.message}`,
+            suggestion: 'Kiểm tra proxy credentials hoặc thử proxy khác'
+          });
+          return;
+        }
+      }
+      
       // Puppeteer crawl
       let browser;
       let html = '';
@@ -1554,12 +1581,15 @@ app.post('/api/crawl', async (req, res) => {
         console.log('Waiting for page to fully load...');
         await randomDelay(1000, 2000);
         
-        // ⚠️ CHECK CAPTCHA NGAY SAU KHI LOAD TRANG (ENUM)
+        // ✅ STEP 3: PHÁT HIỆN CAPTCHA → DỪNG LẠI
+        console.log('🔍 STEP 3: Phát hiện CAPTCHA...');
         const detectedType = await detectCaptchaType(page);
+        
         if (detectedType !== 'NONE') {
-          console.log('⚠️ CAPTCHA detected of type:', detectedType);
+          console.log(`⏸️  DỪNG LẠI - CAPTCHA phát hiện: ${detectedType}`);
+          
           if (!apiKey) {
-            console.log('❌ No API key provided - cannot solve CAPTCHA');
+            console.log('❌ Không có API key - không thể giải CAPTCHA');
             results.push({
               url,
               status: 'captcha_detected',
@@ -1570,11 +1600,13 @@ app.post('/api/crawl', async (req, res) => {
             await browser.close();
             return;
           }
-          // GỌI HÀM GIẢI CAPTCHA
-          console.log('🔧 Solving CAPTCHA with hmcaptcha...');
+          
+          // ✅ STEP 4: GIẢI CAPTCHA
+          console.log('🤖 STEP 4: Bắt đầu giải CAPTCHA với hmcaptcha...');
           const captchaSolved = await solveCaptchaIfNeeded(page, apiKey);
+          
           if (!captchaSolved.success) {
-            console.log('❌ CAPTCHA NOT solved! Message:', captchaSolved.error);
+            console.log('❌ CAPTCHA KHÔNG GIẢI ĐƯỢC! Lỗi:', captchaSolved.error);
             results.push({
               url,
               status: 'captcha_failed',
@@ -1585,11 +1617,12 @@ app.post('/api/crawl', async (req, res) => {
             await browser.close();
             return;
           }
-          console.log('✅ CAPTCHA solved! Waiting for page reload...');
+          
+          console.log('✅ CAPTCHA ĐÃ GIẢI XONG! Chờ page reload...');
           await randomDelay(3000, 5000);
           
           // Kiểm tra xem có thực sự vượt qua gate không
-          console.log('🔍 Verifying page after CAPTCHA solve...');
+          console.log('🔍 Xác nhận đã vượt qua CAPTCHA...');
           const stillGated = await page.evaluate(() => {
             const html = document.documentElement.outerHTML;
             const text = document.body.innerText.toLowerCase();
@@ -1599,7 +1632,7 @@ app.post('/api/crawl', async (req, res) => {
           });
           
           if (stillGated.isSmallHtml || stillGated.hasGateKeywords) {
-            console.log(`❌ Still at gate/verify page after solve! HTML size: ${stillGated.htmlSize}, keywords: ${stillGated.hasGateKeywords}`);
+            console.log(`❌ Vẫn bị chặn sau khi giải CAPTCHA! HTML size: ${stillGated.htmlSize}`);
             results.push({
               url,
               status: 'gate_stuck',
@@ -1610,10 +1643,12 @@ app.post('/api/crawl', async (req, res) => {
             await browser.close();
             return;
           }
-          console.log('✓ Successfully passed gate, HTML size:', stillGated.htmlSize);
+          console.log('✅ Đã vượt qua CAPTCHA thành công! HTML size:', stillGated.htmlSize);
         } else {
-          console.log('✓ No CAPTCHA detected - proceeding with extraction');
+          console.log('✅ Không phát hiện CAPTCHA - tiếp tục crawl');
         }
+        
+        // ✅ STEP 5: TIẾP TỤC CRAWL DỮ LIỆU (sau khi vượt qua CAPTCHA)
         
         // SAU KHI GIẢI CAPTCHA (hoặc không có captcha) → TIẾP TỤC CRAWL
   console.log('Waiting for API requests...');
