@@ -107,26 +107,42 @@ function parseSold(text) {
 }
 
 // ===== URL + Proxy helpers =====
+// Helper: Parse proxy string (handle complex usernames with colons)
+function parseProxy(proxyStr) {
+  if (!proxyStr || typeof proxyStr !== 'string') return null;
+  const parts = proxyStr.split(':');
+  if (parts.length < 2) return null;
+  
+  const host = parts[0];
+  const port = parts[1];
+  
+  if (parts.length >= 4) {
+    const username = parts[2];
+    // Join remaining parts as password (in case password contains :)
+    const password = parts.slice(3).join(':');
+    return { host, port, username, password, hasAuth: true };
+  }
+  
+  return { host, port, hasAuth: false };
+}
+
 function buildProxyAgent(proxyStr) {
   if (!proxyStr) return undefined;
   try {
-    const parts = proxyStr.split(':');
-    if (parts.length >= 4) {
-      const [host, port, username, password] = parts;
-      return new HttpsProxyAgent({
-        host,
-        port,
-        auth: `${encodeURIComponent(username)}:${encodeURIComponent(password)}`,
-        rejectUnauthorized: false // ⭐ FIX SSL errors
-      });
-    } else if (parts.length >= 2) {
-      const [host, port] = parts;
-      return new HttpsProxyAgent({
-        host,
-        port,
-        rejectUnauthorized: false // ⭐ FIX SSL errors
-      });
+    const parsed = parseProxy(proxyStr);
+    if (!parsed) return undefined;
+    
+    const config = {
+      host: parsed.host,
+      port: parsed.port,
+      rejectUnauthorized: false // ⭐ FIX SSL errors
+    };
+    
+    if (parsed.hasAuth) {
+      config.auth = `${encodeURIComponent(parsed.username)}:${encodeURIComponent(parsed.password)}`;
     }
+    
+    return new HttpsProxyAgent(config);
   } catch (e) {
     console.error('⚠️ Proxy agent build error:', e.message);
   }
@@ -861,11 +877,13 @@ app.post('/api/check-ip', async (req, res) => {
     
     // Parse proxy if provided
     if (proxy && proxy.trim()) {
-      const parts = proxy.split(':');
-      if (parts.length === 4) {
-        const [host, port, username, password] = parts;
-        launchOptions.args.push(`--proxy-server=${host}:${port}`);
-        console.log('✓ Proxy configured:', `${host}:${port}`);
+      const parsed = parseProxy(proxy);
+      if (parsed && parsed.hasAuth) {
+        launchOptions.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
+        console.log('✓ Proxy configured:', `${parsed.host}:${parsed.port}`);
+      } else if (parsed) {
+        launchOptions.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
+        console.log('✓ Proxy configured (no auth):', `${parsed.host}:${parsed.port}`);
       } else {
         return res.json({ error: 'Invalid proxy format. Use: host:port:username:password' });
       }
@@ -876,11 +894,11 @@ app.post('/api/check-ip', async (req, res) => {
     
     // Authenticate proxy if needed
     if (proxy && proxy.trim()) {
-      const parts = proxy.split(':');
-      if (parts.length === 4) {
+      const parsed = parseProxy(proxy);
+      if (parsed && parsed.hasAuth) {
         await page.authenticate({
-          username: parts[2],
-          password: parts[3]
+          username: parsed.username,
+          password: parsed.password
         });
         console.log('✓ Proxy authenticated');
       }
@@ -1132,13 +1150,18 @@ app.post('/api/captcha-dry-run', async (req, res) => {
       executablePath: resolveChromiumExecutablePath() || undefined
     };
     if (proxy) {
-      const parts = proxy.split(':');
-      if (parts.length >= 2) launchOptions.args.push(`--proxy-server=${parts[0]}:${parts[1]}`);
+      const parsed = parseProxy(proxy);
+      if (parsed) {
+        launchOptions.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
+      }
     }
     browser = await puppeteer.launch(launchOptions);
     const page = await browser.newPage();
-    if (proxy && proxy.split(':').length >= 4) {
-      await page.authenticate({ username: proxy.split(':')[2], password: proxy.split(':')[3] });
+    if (proxy) {
+      const parsed = parseProxy(proxy);
+      if (parsed && parsed.hasAuth) {
+        await page.authenticate({ username: parsed.username, password: parsed.password });
+      }
     }
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
@@ -1227,11 +1250,9 @@ app.post('/api/crawl', async (req, res) => {
         
         // Parse proxy đúng format: host:port:username:password
         if (proxy) {
-          const proxyParts = proxy.split(':');
-          if (proxyParts.length >= 2) {
-            const host = proxyParts[0];
-            const port = proxyParts[1];
-            launchOptions.args.push(`--proxy-server=${host}:${port}`);
+          const parsed = parseProxy(proxy);
+          if (parsed) {
+            launchOptions.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
           }
         }
         
@@ -1288,12 +1309,12 @@ app.post('/api/crawl', async (req, res) => {
         });
         
         // Xử lý proxy authentication nếu có
-        if (proxy && proxy.split(':').length >= 4) {
-          const proxyParts = proxy.split(':');
-          const username = proxyParts[2];
-          const password = proxyParts[3];
-          await page.authenticate({ username, password });
-          console.log('Proxy authenticated:', username);
+        if (proxy) {
+          const parsed = parseProxy(proxy);
+          if (parsed && parsed.hasAuth) {
+            await page.authenticate({ username: parsed.username, password: parsed.password });
+            console.log('Proxy authenticated:', parsed.username);
+          }
         }
         
         // 🎯 API INTERCEPTION - Primary data extraction method
