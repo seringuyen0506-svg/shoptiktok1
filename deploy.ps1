@@ -88,24 +88,33 @@ else
 fi
 
 # Install dependencies
-echo "📦 [6/10] Installing backend dependencies..."
+echo "📦 [6/11] Installing backend dependencies..."
 cd /var/www/shoptiktok1/backend
 npm install --production >/dev/null 2>&1
 
-echo "📦 [7/10] Installing frontend dependencies..."
+echo "📦 [7/11] Installing frontend dependencies..."
 cd /var/www/shoptiktok1/frontend
 npm install --production >/dev/null 2>&1
 
-# Create .env file
-echo "⚙️  [8/10] Creating environment configuration..."
-cd /var/www/shoptiktok1
-cat > .env << 'ENVEOF'
+# Create .env file in BACKEND directory (dotenv loads from working directory)
+echo "⚙️  [8/11] Creating environment configuration..."
+cat > /var/www/shoptiktok1/backend/.env << 'ENVEOF'
 ALLOW_ORIGINS=https://DOMAIN_PLACEHOLDER,http://DOMAIN_PLACEHOLDER,https://www.DOMAIN_PLACEHOLDER,http://www.DOMAIN_PLACEHOLDER
 NODE_ENV=production
 ENVEOF
 
 # Restart services with PM2
-echo "🚀 [9/10] Starting services with PM2..."
+echo "🚀 [9/11] Starting services with PM2..."
+pm2 delete all 2>/dev/null || true
+
+cd /var/www/shoptiktok1/backend
+pm2 start index.js --name backend
+
+cd /var/www/shoptiktok1/frontend
+pm2 start unified-server.js --name frontend
+
+pm2 save >/dev/null 2>&1
+pm2 startup systemd -u root --hp /root 2>/dev/null | tail -1 | bash >/dev/null 2>&1 || true
 pm2 delete all 2>/dev/null || true
 
 cd /var/www/shoptiktok1/backend
