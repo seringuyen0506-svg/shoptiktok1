@@ -446,8 +446,8 @@ async function advancedDOMExtraction(page) {
     
     // Take screenshot for debugging
     try {
-      await page.screenshot({ path: 'dom_extraction_debug.png', fullPage: true });
-      console.log('✓ Screenshot saved: dom_extraction_debug.png');
+      await page.screenshot({ path: 'debug/dom_extraction_debug.png', fullPage: true });
+      console.log('✓ Screenshot saved: debug/dom_extraction_debug.png');
     } catch (e) {
       console.log('Screenshot failed:', e.message);
     }
@@ -1842,7 +1842,7 @@ app.post('/api/crawl', async (req, res) => {
         html = await page.content();
         
         // Lưu screenshot để debug và OCR
-        const screenshotPath = 'screenshot_debug.png';
+        const screenshotPath = 'debug/screenshot_debug.png';
         try {
           await page.screenshot({ path: screenshotPath, fullPage: false });
           console.log('✓ Screenshot saved');
@@ -1893,8 +1893,8 @@ app.post('/api/crawl', async (req, res) => {
       
       // Lưu HTML để debug
       try {
-        fs.writeFileSync('html_log.txt', html, { encoding: 'utf8' });
-        console.log('✓ HTML saved to html_log.txt');
+        fs.writeFileSync('debug/html_log.txt', html, { encoding: 'utf8' });
+        console.log('✓ HTML saved to debug/html_log.txt');
       } catch (err) {
         console.log('⚠ Error saving html_log.txt:', err.message);
       }

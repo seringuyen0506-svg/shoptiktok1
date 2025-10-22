@@ -31,8 +31,10 @@ build/
 
 # Data files (history, snapshots)
 backend/data/
+backend/debug/
 backend/*.txt
 backend/*.html
+backend/*.png
 
 # Temporary files
 tmp/
