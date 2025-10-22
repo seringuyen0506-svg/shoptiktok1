@@ -574,17 +574,53 @@ async function solveCaptchaIfNeeded(page, apiKey) {
   // 1. Locate CAPTCHA region robustly (main page, iframes, canvas, or text container)
   await debounceWait(400); // stabilize DOM before capture
     console.log('📸 Capturing CAPTCHA screenshot...');
-    let captchaElement = await page.$('img[src*="captcha"], img[alt*="captcha"], [class*="captcha"] canvas, canvas[class*="captcha"], [class*="captcha"]').catch(() => null);
+    
+    // Try multiple selectors for SLIDE CAPTCHA specifically
+    const slideSelectors = [
+      'img[src*="captcha"]',
+      'img[alt*="captcha"]', 
+      'canvas[class*="captcha"]',
+      '[class*="captcha"] img',
+      '[class*="captcha"] canvas',
+      '[id*="captcha"] img',
+      '[id*="captcha"] canvas',
+      // Specific TikTok slide selectors
+      'img.secsdk-captcha-img',
+      'canvas.secsdk-captcha-canvas',
+      '.captcha_verify_img_slide img',
+      '[class*="verify"] img',
+      '[class*="slide"] img'
+    ];
+    
+    let captchaElement = null;
+    
+    // Try main page first
+    for (const sel of slideSelectors) {
+      captchaElement = await page.$(sel).catch(() => null);
+      if (captchaElement) {
+        console.log(`✓ Found CAPTCHA element: ${sel}`);
+        break;
+      }
+    }
+    
     let captchaClip = null; // {x,y,width,height}
 
     // If not found on main page, search inside iframes with url including captcha/verify
     if (!captchaElement) {
+      console.log('⚠️ Not found in main page, checking iframes...');
       const frames = page.frames();
       for (const f of frames) {
         const furl = f.url().toLowerCase();
         if (furl.includes('captcha') || furl.includes('verify')) {
+          console.log(`  Checking iframe: ${furl.substring(0, 80)}...`);
           try {
-            captchaElement = await f.$('img[src*="captcha"], img[alt*="captcha"], [class*="captcha"] canvas, canvas, [class*="captcha"]');
+            for (const sel of slideSelectors) {
+              captchaElement = await f.$(sel).catch(() => null);
+              if (captchaElement) {
+                console.log(`  ✓ Found in iframe: ${sel}`);
+                break;
+              }
+            }
             if (captchaElement) break;
           } catch { /* ignore */ }
         }
@@ -626,10 +662,31 @@ async function solveCaptchaIfNeeded(page, apiKey) {
 
     let screenshot;
     if (captchaElement) {
+      // Get bounding box to validate size
+      const box = await captchaElement.boundingBox().catch(() => null);
+      if (box) {
+        console.log(`📐 CAPTCHA element size: ${Math.round(box.width)}x${Math.round(box.height)}px`);
+        captchaClip = { x: box.x, y: box.y, width: box.width, height: box.height };
+        
+        // If element too small, might be wrong - try parent
+        if (box.width < 200 || box.height < 100) {
+          console.log('⚠️ Element too small, trying parent container...');
+          try {
+            const parent = await page.evaluateHandle(el => el.parentElement, captchaElement);
+            const parentBox = await parent.asElement().boundingBox();
+            if (parentBox && parentBox.width > box.width && parentBox.height > box.height) {
+              console.log(`📐 Parent size: ${Math.round(parentBox.width)}x${Math.round(parentBox.height)}px`);
+              captchaElement = parent.asElement();
+              captchaClip = { x: parentBox.x, y: parentBox.y, width: parentBox.width, height: parentBox.height };
+            }
+          } catch (e) {
+            console.log('Parent check failed:', e.message);
+          }
+        }
+      }
+      
       screenshot = await captchaElement.screenshot({ encoding: 'base64' });
       console.log('✓ Screenshot captured (element)');
-      const box = await captchaElement.boundingBox().catch(() => null);
-      if (box) captchaClip = { x: box.x, y: box.y, width: box.width, height: box.height };
     } else if (captchaClip) {
       // Clip screenshot to detected container
       screenshot = await page.screenshot({ encoding: 'base64', clip: captchaClip }).catch(() => null);
@@ -643,6 +700,26 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       const vp = await page.viewport();
       captchaClip = { x: 0, y: 0, width: vp.width, height: vp.height };
       console.log('✓ Screenshot captured (full page fallback)');
+    }
+    
+    // DEBUG: Save screenshot to file for inspection
+    try {
+      const debugPath = `debug/captcha_${Date.now()}.png`;
+      const buffer = Buffer.from(screenshot, 'base64');
+      fs.writeFileSync(debugPath, buffer);
+      console.log(`🖼️  Screenshot saved to ${debugPath}`);
+      console.log(`📊 Image stats: ${buffer.length} bytes, base64: ${screenshot.length} chars`);
+      
+      // Validate screenshot size
+      if (buffer.length < 5000) {
+        console.log('⚠️ WARNING: Screenshot very small, might be wrong element!');
+      } else if (buffer.length > 5000000) {
+        console.log('⚠️ WARNING: Screenshot very large, might be full page!');
+      } else {
+        console.log('✓ Screenshot size looks reasonable');
+      }
+    } catch (e) {
+      console.log('⚠️ Failed to save debug screenshot:', e.message);
     }
     
     // 2. Decide captcha type from detection + UA
@@ -661,6 +738,8 @@ async function solveCaptchaIfNeeded(page, apiKey) {
       Type: captchaType,
       Image: screenshot
     };
+    
+    console.log(`📦 Payload: Type=${captchaType}, Image size=${screenshot.length} chars`);
     
     // Special case: TIKTOK_ROTATE_WEB needs 2 URL images
     if (captchaType === 'TIKTOK_ROTATE_WEB') {
@@ -695,7 +774,19 @@ async function solveCaptchaIfNeeded(page, apiKey) {
           throw new Error(resp.data.Message || `API Error: Code ${resp.data.Code}`);
         }
         if (resp.data.Status === 'ERROR') {
-          throw new Error(resp.data.Message || 'Solver returned ERROR status');
+          const errMsg = resp.data.Message || 'Solver returned ERROR status';
+          console.log(`⚠️ Solver attempt ${attempt} failed: ${errMsg}`);
+          
+          // Add helpful context for "Cannot solve"
+          if (errMsg.includes('Cannot solve')) {
+            console.log('💡 Possible reasons:');
+            console.log('   - Screenshot không chứa slide puzzle rõ ràng');
+            console.log('   - Chụp sai vùng (không phải CAPTCHA)');
+            console.log('   - Image quá nhỏ hoặc bị blur');
+            console.log('   - CAPTCHA type không match với ảnh');
+          }
+          
+          throw new Error(errMsg);
         }
         if (resp.data.Status === 'SUCCESS' && resp.data.Data) {
           resultData = resp.data.Data;
