@@ -46,7 +46,7 @@ Write-Host "━━━━━━━━━━━━━━━━━━━━━━�
 Write-Host "📝 STEP 2/3: Creating deployment script..." -ForegroundColor Green
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
 
-$BASH_SCRIPT = @"
+$BASH_SCRIPT = @'
 #!/bin/bash
 set -e
 
@@ -196,7 +196,7 @@ echo ""
 
 # Check DNS
 echo "🔍 Checking DNS configuration..."
-DNS_IP=\$(dig +short $DOMAIN @8.8.8.8 | tail -1)
+DNS_IP=\$(dig +short $DOMAIN ``@8.8.8.8 | tail -1)
 SERVER_IP=\$(curl -s ifconfig.me)
 
 if [ "\$DNS_IP" = "\$SERVER_IP" ]; then
@@ -215,7 +215,7 @@ else
     echo "📋 Configure DNS in Hostinger hPanel:"
     echo "   1. Login: https://hpanel.hostinger.com"
     echo "   2. Go to: Domains → $DOMAIN → DNS Zone"
-    echo "   3. Add A Record: @ → \$SERVER_IP"
+    echo "   3. Add A Record: ``@ → \$SERVER_IP"
     echo "   4. Add A Record: www → \$SERVER_IP"
     echo ""
     echo "   After DNS propagates, run:"
@@ -227,10 +227,14 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "✅ ALL DONE!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-"@
+'@
 
 # Convert to Unix line endings and save
 $TEMP_SCRIPT = "$env:TEMP\deploy_complete.sh"
+# Replace placeholders
+$BASH_SCRIPT = $BASH_SCRIPT -replace '\$DOMAIN', $DOMAIN
+$BASH_SCRIPT = $BASH_SCRIPT -replace '\$EMAIL', $EMAIL
+# Convert line endings
 $BASH_SCRIPT -replace "`r`n","`n" | Out-File -FilePath $TEMP_SCRIPT -Encoding UTF8 -NoNewline
 
 Write-Host "✅ Deployment script created!" -ForegroundColor Green
