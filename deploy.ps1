@@ -96,8 +96,16 @@ echo "📦 [7/10] Installing frontend dependencies..."
 cd /var/www/shoptiktok1/frontend
 npm install --production >/dev/null 2>&1
 
+# Create .env file
+echo "⚙️  [8/10] Creating environment configuration..."
+cd /var/www/shoptiktok1
+cat > .env << 'ENVEOF'
+ALLOW_ORIGINS=https://DOMAIN_PLACEHOLDER,http://DOMAIN_PLACEHOLDER,https://www.DOMAIN_PLACEHOLDER,http://www.DOMAIN_PLACEHOLDER
+NODE_ENV=production
+ENVEOF
+
 # Restart services with PM2
-echo "🚀 [8/10] Starting services with PM2..."
+echo "🚀 [9/10] Starting services with PM2..."
 pm2 delete all 2>/dev/null || true
 
 cd /var/www/shoptiktok1/backend
@@ -110,7 +118,7 @@ pm2 save >/dev/null 2>&1
 pm2 startup systemd -u root --hp /root 2>/dev/null | tail -1 | bash >/dev/null 2>&1 || true
 
 # Configure Nginx
-echo "🌐 [9/10] Configuring Nginx..."
+echo "🌐 [10/10] Configuring Nginx..."
 cat > /etc/nginx/sites-available/default << 'NGINX'
 server {
     listen 80 default_server;
@@ -138,7 +146,7 @@ NGINX
 nginx -t && systemctl restart nginx
 
 # Setup SSL
-echo "🔐 [10/10] Setting up SSL certificate..."
+echo "🔐 [11/11] Setting up SSL certificate..."
 certbot --nginx -d DOMAIN_PLACEHOLDER -d www.DOMAIN_PLACEHOLDER \
     --email EMAIL_PLACEHOLDER \
     --agree-tos \

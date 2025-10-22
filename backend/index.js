@@ -9,6 +9,10 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 // Import vanilla puppeteer to access executablePath helper
 import vanillaPuppeteer from 'puppeteer';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 // Sử dụng stealth plugin để tránh bị phát hiện
 puppeteer.use(StealthPlugin());
