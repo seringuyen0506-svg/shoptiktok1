@@ -1847,19 +1847,47 @@ app.post('/api/crawl', async (req, res) => {
           // Nếu đang dùng shared browser (có extension), ưu tiên để extension tự giải
           if (browser === sharedBrowser) {
             console.log('🤖 Shared browser detected - Chờ extension CAPTCHA solver tự động giải...');
-            console.log('⏳ Waiting up to 60 seconds for extension to solve CAPTCHA...');
+            console.log('⏳ Waiting up to 90 seconds for extension to solve CAPTCHA...');
             
-            // Đợi lâu hơn cho extension giải xong
-            await randomDelay(10000, 15000);
+            // Poll để kiểm tra HTML size tăng lên (nghĩa là đã vượt qua CAPTCHA)
+            const maxWaitTime = 90000; // 90 giây
+            const pollInterval = 5000; // Check mỗi 5 giây
+            const startWait = Date.now();
+            let captchaSolved = false;
             
-            // Kiểm tra xem CAPTCHA đã biến mất chưa
-            const captchaStillPresent = await detectCaptchaType(page);
-            if (captchaStillPresent !== 'NONE') {
-              console.log('⚠️  Extension chưa giải xong, chờ thêm...');
-              await randomDelay(15000, 20000);
+            while (Date.now() - startWait < maxWaitTime) {
+              await randomDelay(pollInterval, pollInterval + 1000);
+              
+              // Kiểm tra HTML size
+              const htmlCheck = await page.evaluate(() => {
+                const html = document.documentElement.outerHTML;
+                return {
+                  size: html.length,
+                  hasCaptcha: /captcha|verify|slide/i.test(html)
+                };
+              });
+              
+              console.log(`  📏 HTML size: ${htmlCheck.size} bytes, has CAPTCHA keywords: ${htmlCheck.hasCaptcha}`);
+              
+              // Nếu HTML > 30KB và không còn CAPTCHA keywords = thành công
+              if (htmlCheck.size > 30000 && !htmlCheck.hasCaptcha) {
+                console.log('✅ Extension đã giải CAPTCHA thành công! Page loaded.');
+                captchaSolved = true;
+                break;
+              }
+              
+              const elapsed = ((Date.now() - startWait) / 1000).toFixed(1);
+              console.log(`  ⏱️  Elapsed: ${elapsed}s / 90s`);
             }
             
-            console.log('✅ Extension should have solved CAPTCHA - continuing...');
+            if (!captchaSolved) {
+              console.log('⚠️  Extension không giải được CAPTCHA sau 90s');
+              // Vẫn tiếp tục thử crawl, có thể extension đã giải nhưng ta chưa phát hiện
+            } else {
+              // Chờ thêm để data load đầy đủ
+              console.log('⏳ Waiting for data to fully load...');
+              await randomDelay(3000, 5000);
+            }
           } else {
             // Không có extension, dùng API key
             if (!apiKey) {
@@ -1923,22 +1951,60 @@ app.post('/api/crawl', async (req, res) => {
           });
           
           if (stillGated.isSmallHtml || stillGated.hasGateKeywords) {
-            console.log(`❌ Vẫn bị chặn! HTML size: ${stillGated.htmlSize}`);
-            results.push({
-              url,
-              status: 'gate_stuck',
-              reason: 'gate',
-              message: `Still stuck at verification page. HTML size: ${stillGated.htmlSize}`,
-              suggestion: 'Dùng VPN extension trong shared browser, giảm concurrency xuống 1, hoặc thử region khác.'
-            });
-            if (browser !== sharedBrowser) {
-              await browser.close();
-            } else {
-              await page.close();
+            console.log(`⚠️  HTML vẫn nhỏ (${stillGated.htmlSize}B), thử reload page một lần...`);
+            
+            // Thử reload page một lần nếu extension có thể đã giải nhưng page chưa reload
+            try {
+              await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+              console.log('✓ Page reloaded, waiting for content...');
+              await randomDelay(5000, 8000);
+              
+              // Kiểm tra lại
+              const recheckGated = await page.evaluate(() => {
+                const html = document.documentElement.outerHTML;
+                return {
+                  htmlSize: html.length,
+                  isSmall: html.length < 30000
+                };
+              });
+              
+              if (recheckGated.isSmall) {
+                console.log(`❌ Vẫn bị chặn sau reload! HTML size: ${recheckGated.htmlSize}`);
+                results.push({
+                  url,
+                  status: 'gate_stuck',
+                  reason: 'gate',
+                  message: `Still stuck at verification page after reload. HTML size: ${recheckGated.htmlSize}`,
+                  suggestion: 'Extension không giải được CAPTCHA. Thử: 1) Check extension hoạt động, 2) VPN đổi IP, 3) Giảm concurrency = 1'
+                });
+                if (browser !== sharedBrowser) {
+                  await browser.close();
+                } else {
+                  await page.close();
+                }
+                return;
+              } else {
+                console.log(`✅ Reload thành công! HTML size: ${recheckGated.htmlSize}`);
+              }
+            } catch (reloadError) {
+              console.log('❌ Reload failed:', reloadError.message);
+              results.push({
+                url,
+                status: 'gate_stuck',
+                reason: 'gate',
+                message: `Cannot reload page: ${reloadError.message}`,
+                suggestion: 'Extension không giải được CAPTCHA hoặc IP bị chặn. Check extension hoạt động.'
+              });
+              if (browser !== sharedBrowser) {
+                await browser.close();
+              } else {
+                await page.close();
+              }
+              return;
             }
-            return;
+          } else {
+            console.log('✅ Đã vượt qua CAPTCHA thành công! HTML size:', stillGated.htmlSize);
           }
-          console.log('✅ Đã vượt qua CAPTCHA thành công! HTML size:', stillGated.htmlSize);
         }
         
         // ✅ STEP 5: TIẾP TỤC CRAWL DỮ LIỆU
