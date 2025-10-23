@@ -2695,9 +2695,9 @@ app.get('/api/captcha-result', async (req, res) => {
   }
 });
 
-// Crawl Shop Only - Just get total shop sold from any product link
+// Crawl Shop Only - Get total shop sold and save to history with growth tracking
 app.post('/api/crawl-shop-only', async (req, res) => {
-  const { url, proxy, apiKey } = req.body;
+  const { url, proxy, apiKey, note } = req.body;
   
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
@@ -2706,20 +2706,56 @@ app.post('/api/crawl-shop-only', async (req, res) => {
   try {
     console.log(`🏪 [Shop Only] Crawling shop sold from: ${url}`);
     
-    // Use the same crawl logic but only return shop sold
+    // Get previous data to calculate growth
+    const history = readHistory();
+    const nurl = normalizeUrl(url);
+    const existing = history.find(it => it.url === nurl);
+    const previousShopSold = existing ? parseSold(existing.shopSold) : null;
+    
+    // Crawl current data
     const result = await advancedDomExtraction(url, proxy, apiKey);
     
     if (!result || !result.shopSold) {
       throw new Error('Could not extract shop sold data');
     }
     
+    const currentShopSold = parseSold(result.shopSold);
+    
     console.log(`✅ [Shop Only] Shop: ${result.shopName}, Sold: ${result.shopSold}`);
+    
+    // Save to history (will create snapshot)
+    const savedItem = upsertHistoryItem({
+      url: url,
+      shopId: result.shopId || null,
+      shopSlug: result.shopSlug || null,
+      shopName: result.shopName || '',
+      shopSold: result.shopSold || '',
+      productName: result.productName || 'Shop Total',
+      productSold: result.productSold || '',
+      note: note || 'Shop crawl'
+    });
+    
+    // Calculate growth
+    let growth = null;
+    if (previousShopSold !== null && currentShopSold !== null && previousShopSold > 0) {
+      const diff = currentShopSold - previousShopSold;
+      const percent = ((diff / previousShopSold) * 100).toFixed(1);
+      growth = {
+        previous: previousShopSold,
+        current: currentShopSold,
+        diff: diff,
+        percent: parseFloat(percent)
+      };
+      console.log(`📊 [Shop Only] Growth: ${diff > 0 ? '+' : ''}${diff} (${percent}%)`);
+    }
     
     res.json({
       success: true,
       shopName: result.shopName || '',
       shopSold: result.shopSold || '',
-      url: url
+      url: url,
+      growth: growth,
+      savedId: savedItem.id
     });
   } catch (error) {
     console.error('❌ [Shop Only] Error:', error.message);

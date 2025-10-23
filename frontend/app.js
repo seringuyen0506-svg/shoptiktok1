@@ -152,11 +152,14 @@ function App() {
           ...prev,
           [groupKey]: { 
             shopName: data.shopName, 
-            shopSold: data.shopSold, 
+            shopSold: data.shopSold,
+            growth: data.growth,
             loading: false,
             error: null
           }
         }));
+        // Reload history to show updated data
+        loadHistory();
       } else {
         throw new Error(data.error || 'Crawl failed');
       }
@@ -2187,9 +2190,18 @@ function App() {
                   shopOnlyResults[g.key] && !shopOnlyResults[g.key].loading && (
                     shopOnlyResults[g.key].error 
                       ? React.createElement('span', { key: 'err', style: { fontSize: 13, color: '#ef4444', fontWeight: 500 } }, `❌ ${shopOnlyResults[g.key].error}`)
-                      : React.createElement('span', { key: 'res', style: { fontSize: 13, color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 } }, [
-                          React.createElement('span', { key: 'icon' }, '📦'),
-                          React.createElement('span', { key: 'sold' }, `Tổng: ${shopOnlyResults[g.key].shopSold}`)
+                      : React.createElement('div', { key: 'res', style: { display: 'flex', flexDirection: 'column', gap: 2 } }, [
+                          React.createElement('div', { key: 'main', style: { fontSize: 13, color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 } }, [
+                            React.createElement('span', { key: 'icon' }, '📦'),
+                            React.createElement('span', { key: 'sold' }, `Tổng: ${shopOnlyResults[g.key].shopSold}`)
+                          ]),
+                          shopOnlyResults[g.key].growth && React.createElement('div', { key: 'growth', style: { fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 } }, [
+                            React.createElement('span', { key: 'icon', style: { fontSize: 14 } }, shopOnlyResults[g.key].growth.diff >= 0 ? '📈' : '📉'),
+                            React.createElement('span', { 
+                              key: 'text', 
+                              style: { color: shopOnlyResults[g.key].growth.diff >= 0 ? '#10b981' : '#ef4444' } 
+                            }, `${shopOnlyResults[g.key].growth.diff >= 0 ? '+' : ''}${shopOnlyResults[g.key].growth.diff} (${shopOnlyResults[g.key].growth.percent >= 0 ? '+' : ''}${shopOnlyResults[g.key].growth.percent}%)`)
+                          ])
                         ])
                   ),
                   React.createElement(Button, { key: 'recg', variant: 'secondary', onClick: () => handleRecrawlGroup(g.items) }, '↻ Crawl cả nhóm'),
