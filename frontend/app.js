@@ -2514,8 +2514,12 @@ function App() {
             React.createElement('thead', { key: 'thead' }, React.createElement('tr', { style: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' } }, [
               React.createElement('th', { key: 'name', style: { padding: '14px 20px', textAlign: 'left', fontWeight: 700, fontSize: 14, position: 'sticky', left: 0, background: '#667eea', zIndex: 10, borderRight: '1px solid rgba(255,255,255,0.2)' } }, 'Store Name'),
               React.createElement('th', { key: 'url', style: { padding: '14px 20px', textAlign: 'left', fontWeight: 700, fontSize: 14, minWidth: 250, borderRight: '1px solid rgba(255,255,255,0.2)' } }, 'Store URL'),
-              ...sortedDates.map((date, idx) => 
-                React.createElement('th', { 
+              ...sortedDates.map((date, idx) => {
+                // Convert YYYY-MM-DD to DD/MM/YYYY
+                const [year, month, day] = date.split('-');
+                const formattedDate = `${day}/${month}/${year}`;
+                
+                return React.createElement('th', { 
                   key: `date-${idx}`, 
                   style: { 
                     padding: '14px 20px', 
@@ -2526,8 +2530,8 @@ function App() {
                     whiteSpace: 'nowrap',
                     borderRight: idx < sortedDates.length - 1 ? '1px solid rgba(255,255,255,0.2)' : 'none'
                   } 
-                }, date.slice(5)) // MM-DD
-              )
+                }, formattedDate); // DD/MM/YYYY
+              })
             ])),
             
             // Body
