@@ -1054,7 +1054,7 @@ app.get('/api/crawl-async/:id', (req, res) => {
 
 // Dry-run endpoint to test CAPTCHA solving on a single URL without extraction
 app.post('/api/captcha-dry-run', async (req, res) => {
-  const { url, apiKey, proxy } = req.body || {};
+  const { url, apiKey } = req.body || {};
   if (!url) return res.status(400).json({ error: 'url is required' });
   if (!apiKey) return res.status(400).json({ error: 'apiKey is required' });
 
@@ -1071,20 +1071,8 @@ app.post('/api/captcha-dry-run', async (req, res) => {
       ],
       executablePath: resolveChromiumExecutablePath() || undefined
     };
-    if (proxy) {
-      const parsed = parseProxy(proxy);
-      if (parsed) {
-        launchOptions.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
-      }
-    }
     browser = await puppeteer.launch(launchOptions);
     const page = await browser.newPage();
-    if (proxy) {
-      const parsed = parseProxy(proxy);
-      if (parsed && parsed.hasAuth) {
-        await page.authenticate({ username: parsed.username, password: parsed.password });
-      }
-    }
     await page.setViewport({ width: 1366, height: 768 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -1702,15 +1690,6 @@ app.post('/api/crawl', async (req, res) => {
           'Sec-Ch-Ua-Mobile': '?0',
           'Sec-Ch-Ua-Platform': '"Windows"'
         });
-        
-        // Xử lý proxy authentication nếu có
-        if (proxy) {
-          const parsed = parseProxy(proxy);
-          if (parsed && parsed.hasAuth) {
-            await page.authenticate({ username: parsed.username, password: parsed.password });
-            console.log('Proxy authenticated:', parsed.username);
-          }
-        }
         
         // 🎯 API INTERCEPTION - Primary data extraction method
   let apiData = null; // Product detail API payload (preferred)
@@ -2500,16 +2479,6 @@ app.post('/api/crawl', async (req, res) => {
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
   const successCount = results.filter(r => !r.error && r.status !== 'error').length;
   console.log(`🎉 COMPLETED: ${successCount}/${links.length} successful | Total time: ${totalTime}s`);
-  
-  // Close browser if it's not the shared browser
-  if (browser && browser !== sharedBrowser) {
-    try {
-      await browser.close();
-      console.log('✓ Browser closed');
-    } catch (e) {
-      console.log('Browser already closed');
-    }
-  }
   
   res.json({ results });
 });
