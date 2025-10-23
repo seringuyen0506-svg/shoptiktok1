@@ -2695,6 +2695,41 @@ app.get('/api/captcha-result', async (req, res) => {
   }
 });
 
+// Crawl Shop Only - Just get total shop sold from any product link
+app.post('/api/crawl-shop-only', async (req, res) => {
+  const { url, proxy, apiKey } = req.body;
+  
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+  
+  try {
+    console.log(`🏪 [Shop Only] Crawling shop sold from: ${url}`);
+    
+    // Use the same crawl logic but only return shop sold
+    const result = await advancedDomExtraction(url, proxy, apiKey);
+    
+    if (!result || !result.shopSold) {
+      throw new Error('Could not extract shop sold data');
+    }
+    
+    console.log(`✅ [Shop Only] Shop: ${result.shopName}, Sold: ${result.shopSold}`);
+    
+    res.json({
+      success: true,
+      shopName: result.shopName || '',
+      shopSold: result.shopSold || '',
+      url: url
+    });
+  } catch (error) {
+    console.error('❌ [Shop Only] Error:', error.message);
+    res.status(500).json({ 
+      error: error.message || 'Failed to crawl shop data',
+      details: error.stack
+    });
+  }
+});
+
 // Health check endpoint for Cloudflare Tunnel testing
 app.get('/health', (req, res) => {
   res.status(200).send('ok');

@@ -107,6 +107,51 @@ function App() {
     await handleCrawl(urls);
   };
 
+  const handleCrawlShopOnly = async (items) => {
+    if (!items || items.length === 0) return;
+    
+    // Take first item's URL to get shop info
+    const firstUrl = items[0].url;
+    
+    if (!proxy) {
+      alert('⚠️ Vui lòng nhập proxy trước!');
+      return;
+    }
+    
+    const confirmMsg = `Crawl tổng SOLD của shop từ:\n${firstUrl}\n\nKết quả sẽ hiển thị ngay sau khi hoàn tất.`;
+    if (!confirm(confirmMsg)) return;
+    
+    setLoading(true);
+    try {
+      const res = await fetch('/api/crawl-shop-only', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          url: firstUrl, 
+          proxy: proxy.trim(),
+          apiKey: apiKey.trim()
+        }),
+        credentials: 'include'
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Server error: ${res.status}`);
+      }
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`✅ Shop: ${data.shopName}\n📦 Tổng đã bán: ${data.shopSold}`);
+      } else {
+        throw new Error(data.error || 'Crawl failed');
+      }
+    } catch (e) {
+      alert(`❌ Lỗi: ${e.message}`);
+    }
+    setLoading(false);
+  };
+
   const setGroupCollapsed = (key, val) => {
     setCollapsedGroups(prev => {
       const next = { ...prev, [key]: val };
@@ -2116,6 +2161,7 @@ function App() {
                   ])
                 ]),
                 React.createElement('div', { key: 'actions', style: { display: 'flex', gap: 8 } }, [
+                  React.createElement(Button, { key: 'shop', variant: 'secondary', onClick: () => handleCrawlShopOnly(g.items), style: { background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' } }, '🏪 Crawl Shop'),
                   React.createElement(Button, { key: 'recg', variant: 'secondary', onClick: () => handleRecrawlGroup(g.items) }, '↻ Crawl cả nhóm'),
                   React.createElement(Button, { key: 'delg', variant: 'secondary', onClick: () => handleDeleteGroup(g.items), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa nhóm')
                 ])
