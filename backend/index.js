@@ -287,7 +287,7 @@ function normalizeUrl(url) {
   }
 }
 
-function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note, shopId, shopSlug, shopGrowth }) {
+function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note, shopId, shopSlug, productGrowth, shopGrowth }) {
   const list = readHistory();
   const nurl = normalizeUrl(url);
   const now = new Date();
@@ -306,6 +306,7 @@ function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, 
       shopSold: shopSold || '',
       productSold: productSold || '',
       note: note || '',
+      productGrowth: productGrowth || null,
       shopGrowth: shopGrowth || null,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
@@ -320,6 +321,7 @@ function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, 
     item.shopSold = shopSold ?? item.shopSold;
     item.productSold = productSold ?? item.productSold;
     if (typeof note === 'string') item.note = note;
+    if (productGrowth) item.productGrowth = productGrowth;
     if (shopGrowth) item.shopGrowth = shopGrowth;
     item.updatedAt = now.toISOString();
   }
@@ -1763,10 +1765,13 @@ QUAN TRỌNG: Trả lời bằng văn bản thuần (plain text), KHÔNG dùng m
 app.post('/api/crawl', async (req, res) => {
   const { links, proxy, apiKey, note, prefs } = req.body;
   if (!Array.isArray(links)) return res.status(400).json({ error: 'links must be an array' });
-  // Concurrency: allow client to set, but clamp to 1..3 to avoid overload
+  
+  // Concurrency: For bulk crawling (50+ links), limit to 2-3 concurrent browsers max
+  // This prevents server overload and reduces 504 Gateway Timeout errors
   const requestedConc = Number(req.body?.concurrency);
   const CONCURRENCY = Math.min(Math.max(Number.isFinite(requestedConc) ? requestedConc : 2, 1), 3);
   console.log(`⚙️ Concurrency set to ${CONCURRENCY} (requested=${requestedConc || 'default'})`);
+  console.log(`📊 Processing ${links.length} links with ${CONCURRENCY} concurrent browsers`);
   
   if (CONCURRENCY > 2) {
     console.log('⚠️ WARNING: Concurrency > 2 tăng nguy cơ CAPTCHA/gate/524. Khuyến nghị: 1-2 luồng.');
@@ -2566,6 +2571,23 @@ app.post('/api/crawl', async (req, res) => {
       // Kiểm tra xem có dữ liệu không (non geo-blocked case)
       if (shopName || shopSold || productName || productSold) {
         console.log('✓ Successfully extracted data:', { shopName, shopSold, productName, productSold });
+        
+        // Tính product growth từ history
+        let productGrowth = null;
+        try {
+          const historyItems = readHistory();
+          const prevItem = historyItems.find(it => normalizeUrl(it.url) === normalizeUrl(url));
+          if (prevItem && prevItem.productSold) {
+            const previousProductSold = parseSold(prevItem.productSold);
+            const currentProductSold = parseSold(productSold);
+            if (previousProductSold !== null && currentProductSold !== null) {
+              const diff = currentProductSold - previousProductSold;
+              const percent = previousProductSold > 0 ? parseFloat(((diff / previousProductSold) * 100).toFixed(1)) : 0;
+              productGrowth = { previous: previousProductSold, current: currentProductSold, diff, percent };
+            }
+          }
+        } catch {}
+        
         const item = {
           url,
           status: 'success',
@@ -2578,7 +2600,7 @@ app.post('/api/crawl', async (req, res) => {
           productSold
         };
         results.push(item);
-        try { upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note, shopId: item.shopId, shopSlug: item.shopSlug }); } catch {}
+        try { upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note, shopId: item.shopId, shopSlug: item.shopSlug, productGrowth }); } catch {}
         return;
       }
       
@@ -2641,18 +2663,36 @@ app.post('/api/crawl', async (req, res) => {
     }
   };
 
-  // Simple promise pool
+  // Simple promise pool with progress tracking
   let idx = 0;
-  const workers = Array.from({ length: CONCURRENCY }).map(async () => {
+  let completedCount = 0;
+  const startTime = Date.now();
+  
+  const workers = Array.from({ length: CONCURRENCY }).map(async (_, workerNum) => {
     while (true) {
       const current = idx++;
       if (current >= links.length) break;
       const url = links[current];
+      
+      console.log(`🔄 Worker ${workerNum + 1}: Processing link ${current + 1}/${links.length} - ${url.substring(0, 60)}...`);
       await crawlUrl(url);
+      
+      completedCount++;
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      const avgTime = (elapsed / completedCount).toFixed(1);
+      const remaining = links.length - completedCount;
+      const estimatedRemaining = (remaining * avgTime).toFixed(0);
+      
+      console.log(`✅ Progress: ${completedCount}/${links.length} (${((completedCount/links.length)*100).toFixed(1)}%) | Avg: ${avgTime}s/link | ETA: ~${estimatedRemaining}s`);
     }
   });
 
   await Promise.all(workers);
+  
+  const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+  const successCount = results.filter(r => !r.error && r.status !== 'error').length;
+  console.log(`🎉 COMPLETED: ${successCount}/${links.length} successful | Total time: ${totalTime}s`);
+  
   res.json({ results });
 });
 
@@ -2717,7 +2757,8 @@ app.post('/api/crawl-shop-only', async (req, res) => {
     console.log(`📊 Previous shop sold: ${previousShopSold || 'N/A'}`);
     
     // Call /api/crawl endpoint via HTTP to reuse all crawl logic
-    const crawlResponse = await axios.post('http://localhost:5000/api/crawl', {
+    const PORT = process.env.PORT || 8080;
+    const crawlResponse = await axios.post(`http://localhost:${PORT}/api/crawl`, {
       links: [url],
       proxy: proxy || '',
       apiKey: apiKey || '',
@@ -2800,8 +2841,15 @@ app.get('/api/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
+
+// Create HTTP server with extended timeout for bulk crawling
+const server = app.listen(PORT, () => {
   console.log(`Backend running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`API Health: http://localhost:${PORT}/api/health`);
 });
+
+// Increase timeout to 10 minutes for processing 50+ links
+server.timeout = 600000; // 10 minutes
+server.keepAliveTimeout = 610000; // 10 minutes + 10 seconds
+server.headersTimeout = 620000; // 10 minutes + 20 seconds

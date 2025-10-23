@@ -31,6 +31,18 @@ function App() {
   const [collapsedGroups, setCollapsedGroups] = useState({}); // key:boolean collapsed
   const [shopOnlyResults, setShopOnlyResults] = useState({}); // key: groupKey, value: { shopName, shopSold, loading, error }
   
+  // Tab navigation state
+  const [activeTab, setActiveTab] = useState('crawler'); // crawler, results, history
+  
+  // Dashboard states
+  const [compactView, setCompactView] = useState(false);
+  const [sortBy, setSortBy] = useState('updatedAt'); // updatedAt, shopSold, productGrowth, shopGrowth
+  const [sortOrder, setSortOrder] = useState('desc'); // asc, desc
+  const [filterGrowth, setFilterGrowth] = useState('all'); // all, positive, negative, none
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
+  
   // Shop crawl states
   const [shopUrl, setShopUrl] = useState('');
   const [shopAmount, setShopAmount] = useState(30);
@@ -567,13 +579,28 @@ function App() {
             await new Promise(r => setTimeout(r, 3000));
           }
         }
-        if (!finished) throw new Error('Hết thời gian chờ job');
+        if (!finished) {
+          clearInterval(progressInterval);
+          throw new Error('Hết thời gian chờ job');
+        }
       } else {
+        // Create timeout signal (with fallback for older browsers)
+        let timeoutSignal;
+        try {
+          timeoutSignal = AbortSignal.timeout(600000); // 10 minutes
+        } catch (e) {
+          // Fallback for browsers that don't support AbortSignal.timeout
+          const controller = new AbortController();
+          setTimeout(() => controller.abort(), 600000);
+          timeoutSignal = controller.signal;
+        }
+        
         const res = await fetch('/api/crawl', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ links: linkArray, proxy, apiKey, note, concurrency }),
-          credentials: 'include'
+          credentials: 'include',
+          signal: timeoutSignal
         });
         
         if (!res.ok) {
@@ -669,6 +696,19 @@ function App() {
     }
   };
 
+  // Helper function to parse sold numbers
+  const parseSold = (str) => {
+    if (!str) return null;
+    const s = String(str).toLowerCase().replace(/[,\s]/g, '');
+    if (s.includes('k')) {
+      return parseFloat(s.replace('k', '')) * 1000;
+    } else if (s.includes('m')) {
+      return parseFloat(s.replace('m', '')) * 1000000;
+    }
+    const num = parseFloat(s);
+    return isNaN(num) ? null : num;
+  };
+
   // Modern styled components
   const GlassCard = ({ children, style = {} }) => {
     return React.createElement('div', {
@@ -685,16 +725,88 @@ function App() {
     }, children);
   };
 
+  // ===== Filtered, Sorted, Paginated History =====
+  const processedHistory = useMemo(() => {
+    let filtered = [...history];
+    
+    // Search filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter(h => 
+        (h.shopName || '').toLowerCase().includes(q) ||
+        (h.productName || '').toLowerCase().includes(q) ||
+        (h.url || '').toLowerCase().includes(q)
+      );
+    }
+    
+    // Growth filter
+    if (filterGrowth !== 'all') {
+      if (filterGrowth === 'positive') {
+        filtered = filtered.filter(h => h.shopGrowth && h.shopGrowth.diff > 0);
+      } else if (filterGrowth === 'negative') {
+        filtered = filtered.filter(h => h.shopGrowth && h.shopGrowth.diff < 0);
+      } else if (filterGrowth === 'none') {
+        filtered = filtered.filter(h => !h.shopGrowth);
+      }
+    }
+    
+    // Sort
+    filtered.sort((a, b) => {
+      let valA, valB;
+      
+      if (sortBy === 'updatedAt') {
+        valA = new Date(a.updatedAt || a.createdAt).getTime();
+        valB = new Date(b.updatedAt || b.createdAt).getTime();
+      } else if (sortBy === 'shopSold') {
+        valA = parseSold(a.shopSold) || 0;
+        valB = parseSold(b.shopSold) || 0;
+      } else if (sortBy === 'shopGrowth') {
+        valA = a.shopGrowth?.percent || -Infinity;
+        valB = b.shopGrowth?.percent || -Infinity;
+      } else if (sortBy === 'productGrowth') {
+        valA = a.productGrowth?.percent || -Infinity;
+        valB = b.productGrowth?.percent || -Infinity;
+      }
+      
+      return sortOrder === 'desc' ? valB - valA : valA - valB;
+    });
+    
+    return filtered;
+  }, [history, searchQuery, filterGrowth, sortBy, sortOrder]);
+  
+  const paginatedHistory = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    return processedHistory.slice(start, end);
+  }, [processedHistory, currentPage, itemsPerPage]);
+  
+  const totalPages = Math.ceil(processedHistory.length / itemsPerPage);
+
   // ===== Stats (Charts) =====
   const topShops = useMemo(() => {
-    // compute top 10 shops by count
+    // compute top 10 shops by total shopSold
     const byShop = {};
     for (const it of history) {
       const key = it.shopId || it.shopSlug || it.shopName || 'Unknown Shop';
-      if (!byShop[key]) byShop[key] = { name: it.shopName || it.shopSlug || 'Unknown Shop', count: 0 };
-      byShop[key].count++;
+      if (!byShop[key]) {
+        byShop[key] = { 
+          name: it.shopName || it.shopSlug || 'Unknown Shop', 
+          totalSold: 0,
+          lastShopSold: it.shopSold // Keep latest shopSold value
+        };
+      }
+      // Update with latest shopSold (most recent crawl data)
+      const sold = parseSold(it.shopSold);
+      if (sold !== null && sold > byShop[key].totalSold) {
+        byShop[key].totalSold = sold;
+        byShop[key].lastShopSold = it.shopSold;
+      }
     }
-    return Object.values(byShop).sort((a,b) => b.count - a.count).slice(0, 10);
+    return Object.values(byShop)
+      .filter(s => s.totalSold > 0)
+      .sort((a,b) => b.totalSold - a.totalSold)
+      .slice(0, 10)
+      .map(s => ({ name: s.name, count: s.totalSold })); // Use 'count' for chart compatibility
   }, [history]);
 
   const statusDist = useMemo(() => {
@@ -1082,8 +1194,77 @@ function App() {
       ])
     ),
 
+    // Tab Navigation
+    React.createElement('div', {
+      style: {
+        background: 'white',
+        borderRadius: 'var(--radius-xl)',
+        padding: '8px',
+        marginBottom: 'var(--space-lg)',
+        boxShadow: 'var(--shadow-sm)',
+        border: '1px solid var(--color-gray-200)',
+        display: 'flex',
+        gap: '8px'
+      }
+    }, [
+      React.createElement('button', {
+        key: 'tab-crawler',
+        onClick: () => setActiveTab('crawler'),
+        style: {
+          flex: 1,
+          padding: '14px 24px',
+          borderRadius: 'var(--radius-lg)',
+          border: 'none',
+          fontSize: '15px',
+          fontWeight: '600',
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+          background: activeTab === 'crawler' ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : '#f9fafb',
+          color: activeTab === 'crawler' ? 'white' : '#6b7280',
+          boxShadow: activeTab === 'crawler' ? '0 4px 12px rgba(102, 126, 234, 0.3)' : 'none'
+        }
+      }, '🚀 Crawler'),
+      React.createElement('button', {
+        key: 'tab-results',
+        onClick: () => setActiveTab('results'),
+        style: {
+          flex: 1,
+          padding: '14px 24px',
+          borderRadius: 'var(--radius-lg)',
+          border: 'none',
+          fontSize: '15px',
+          fontWeight: '600',
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+          background: activeTab === 'results' ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : '#f9fafb',
+          color: activeTab === 'results' ? 'white' : '#6b7280',
+          boxShadow: activeTab === 'results' ? '0 4px 12px rgba(102, 126, 234, 0.3)' : 'none'
+        }
+      }, '📊 Kết quả'),
+      React.createElement('button', {
+        key: 'tab-history',
+        onClick: () => setActiveTab('history'),
+        style: {
+          flex: 1,
+          padding: '14px 24px',
+          borderRadius: 'var(--radius-lg)',
+          border: 'none',
+          fontSize: '15px',
+          fontWeight: '600',
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+          background: activeTab === 'history' ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : '#f9fafb',
+          color: activeTab === 'history' ? 'white' : '#6b7280',
+          boxShadow: activeTab === 'history' ? '0 4px 12px rgba(102, 126, 234, 0.3)' : 'none'
+        }
+      }, '📜 Lịch sử')
+    ]),
+
+    // Crawler Tab Content
+    activeTab === 'crawler' && React.createElement(React.Fragment, null, [
     // Proxy Section
     React.createElement(GlassCard, { 
+      key: 'proxy-card',
       children: [
         React.createElement('h3', { 
           key: 'proxy-title',
@@ -1232,6 +1413,18 @@ function App() {
           React.createElement('input', { key: 'async-checkbox', type: 'checkbox', checked: asyncMode, onChange: e => { const on = e.target.checked; setAsyncMode(on); localStorage.setItem('crawlAsyncMode', on ? '1' : '0'); } }),
           React.createElement('span', { key: 'async-label', style: { fontSize: 14, color: '#374151' } }, 'Chế độ chống 524 (chạy nền + polling)')
         ]),
+        React.createElement('div', {
+          key: 'bulk-info',
+          style: {
+            background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)',
+            padding: '12px 16px',
+            borderRadius: '8px',
+            marginBottom: '12px',
+            borderLeft: '4px solid #667eea',
+            fontSize: '13px',
+            color: '#4b5563'
+          }
+        }, '💡 Tối ưu cho crawl 50-100 link: Timeout 10 phút, xử lý 2-3 link đồng thời để tránh quá tải server'),
         React.createElement('textarea', {
           key: 'links-input',
           value: links,
@@ -1590,7 +1783,7 @@ function App() {
               fontSize: 15,
               color: 'var(--color-gray-900)'
             } 
-          }, 'Top Shop theo số sản phẩm')
+          }, 'Top Shop theo tổng lượt bán')
         ]),
         React.createElement('div', { key: 'c', style: { position: 'relative', width: '100%', height: 240 } },
           React.createElement('canvas', { id: 'chart-topshops' })
@@ -2082,7 +2275,354 @@ function App() {
         ])
       ])
     ]),
+    ]), // End Crawler Tab
 
+    // Results Tab Content  
+    activeTab === 'results' && React.createElement(React.Fragment, null, [
+    // Dashboard Overview Section
+    history.length > 0 && React.createElement('div', { key: 'dashboard', style: { marginTop: 20, background: 'white', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.1)' } }, [
+      React.createElement('h3', { key: 'title', style: { margin: '0 0 20px 0', fontSize: 22, fontWeight: 700, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } }, '📊 Tổng quan'),
+      
+      // Key Metrics Cards
+      React.createElement('div', { key: 'metrics', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 20 } }, [
+        // Total Shops
+        React.createElement('div', { key: 'shops', style: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderRadius: 12, padding: 16, color: 'white' } }, [
+          React.createElement('div', { key: 'icon', style: { fontSize: 32, marginBottom: 8 } }, '🏪'),
+          React.createElement('div', { key: 'val', style: { fontSize: 28, fontWeight: 700 } }, Object.keys(shopCounts).length),
+          React.createElement('div', { key: 'lbl', style: { fontSize: 13, opacity: 0.9 } }, 'Tổng số Shop')
+        ]),
+        
+        // Total Products
+        React.createElement('div', { key: 'products', style: { background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', borderRadius: 12, padding: 16, color: 'white' } }, [
+          React.createElement('div', { key: 'icon', style: { fontSize: 32, marginBottom: 8 } }, '📦'),
+          React.createElement('div', { key: 'val', style: { fontSize: 28, fontWeight: 700 } }, history.length),
+          React.createElement('div', { key: 'lbl', style: { fontSize: 13, opacity: 0.9 } }, 'Tổng sản phẩm')
+        ]),
+        
+        // Best Shop Growth
+        React.createElement('div', { key: 'best', style: { background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', borderRadius: 12, padding: 16, color: 'white' } }, [
+          React.createElement('div', { key: 'icon', style: { fontSize: 32, marginBottom: 8 } }, '📈'),
+          React.createElement('div', { key: 'val', style: { fontSize: 28, fontWeight: 700 } }, (() => {
+            const withGrowth = history.filter(h => h.shopGrowth && h.shopGrowth.percent);
+            if (withGrowth.length === 0) return '—';
+            const best = withGrowth.reduce((max, h) => h.shopGrowth.percent > max ? h.shopGrowth.percent : max, -Infinity);
+            return best > 0 ? `+${best.toFixed(1)}%` : '—';
+          })()),
+          React.createElement('div', { key: 'lbl', style: { fontSize: 13, opacity: 0.9 } }, 'Shop tăng mạnh nhất')
+        ]),
+        
+        // Shops with Positive Growth
+        React.createElement('div', { key: 'positive', style: { background: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)', borderRadius: 12, padding: 16, color: 'white' } }, [
+          React.createElement('div', { key: 'icon', style: { fontSize: 32, marginBottom: 8 } }, '✅'),
+          React.createElement('div', { key: 'val', style: { fontSize: 28, fontWeight: 700 } }, (() => {
+            const withGrowth = history.filter(h => h.shopGrowth && h.shopGrowth.diff > 0);
+            return withGrowth.length;
+          })()),
+          React.createElement('div', { key: 'lbl', style: { fontSize: 13, opacity: 0.9 } }, 'Shop đang tăng trưởng')
+        ])
+      ]),
+      
+      // Filter and Sort Controls
+      React.createElement('div', { key: 'controls', style: { display: 'flex', flexWrap: 'wrap', gap: 12, padding: 16, background: '#f9fafb', borderRadius: 12, alignItems: 'center' } }, [
+        // Search
+        React.createElement('div', { key: 'search', style: { flex: '1 1 250px', position: 'relative', display: 'flex', gap: 8 } }, [
+          React.createElement('input', {
+            type: 'text',
+            placeholder: '🔍 Tìm shop...',
+            value: searchQuery,
+            onChange: e => setSearchQuery(e.target.value),
+            onKeyPress: e => { if (e.key === 'Enter') setCurrentPage(1); },
+            style: { flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 14, outline: 'none' }
+          }),
+          React.createElement('button', {
+            key: 'search-btn',
+            onClick: () => setCurrentPage(1),
+            style: { padding: '10px 20px', borderRadius: 8, border: 'none', background: '#667eea', color: 'white', cursor: 'pointer', fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap' }
+          }, '🔍 Tìm kiếm'),
+          searchQuery && React.createElement('button', {
+            key: 'clear',
+            onClick: () => { setSearchQuery(''); setCurrentPage(1); },
+            style: { padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: 'white', cursor: 'pointer', fontSize: 14, color: '#9ca3af' }
+          }, '✖')
+        ]),
+        
+        // Filter Growth
+        React.createElement('select', {
+          key: 'filter-growth',
+          value: filterGrowth,
+          onChange: e => { setFilterGrowth(e.target.value); setCurrentPage(1); },
+          style: { padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 14, background: 'white', cursor: 'pointer' }
+        }, [
+          React.createElement('option', { value: 'all' }, 'Tất cả tăng trưởng'),
+          React.createElement('option', { value: 'positive' }, '📈 Chỉ shop tăng'),
+          React.createElement('option', { value: 'negative' }, '📉 Chỉ shop giảm'),
+          React.createElement('option', { value: 'none' }, '— Chưa có data')
+        ]),
+        
+        // Sort By
+        React.createElement('select', {
+          key: 'sort-by',
+          value: sortBy,
+          onChange: e => setSortBy(e.target.value),
+          style: { padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 14, background: 'white', cursor: 'pointer' }
+        }, [
+          React.createElement('option', { value: 'updatedAt' }, 'Sắp xếp: Thời gian'),
+          React.createElement('option', { value: 'shopSold' }, 'Sắp xếp: Đã bán Shop'),
+          React.createElement('option', { value: 'shopGrowth' }, 'Sắp xếp: Tăng trưởng Shop'),
+          React.createElement('option', { value: 'productGrowth' }, 'Sắp xếp: Tăng trưởng SP')
+        ]),
+        
+        // Sort Order
+        React.createElement('button', {
+          key: 'sort-order',
+          onClick: () => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc'),
+          style: { padding: '10px 16px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 14, background: 'white', cursor: 'pointer', fontWeight: 600 }
+        }, sortOrder === 'desc' ? '⬇ Giảm dần' : '⬆ Tăng dần'),
+        
+        // View Mode Toggle
+        React.createElement('button', {
+          key: 'view-mode',
+          onClick: () => setCompactView(prev => !prev),
+          style: { padding: '10px 16px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 14, background: compactView ? '#667eea' : 'white', color: compactView ? 'white' : '#374151', cursor: 'pointer', fontWeight: 600 }
+        }, compactView ? '📋 Chế độ gọn' : '📄 Chế độ chi tiết'),
+        
+        // Items per page
+        React.createElement('select', {
+          key: 'per-page',
+          value: itemsPerPage,
+          onChange: e => { setItemsPerPage(parseInt(e.target.value)); setCurrentPage(1); },
+          style: { padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 14, background: 'white', cursor: 'pointer' }
+        }, [
+          React.createElement('option', { value: 20 }, '20 / trang'),
+          React.createElement('option', { value: 50 }, '50 / trang'),
+          React.createElement('option', { value: 100 }, '100 / trang')
+        ])
+      ])
+    ]),
+
+    // Time-Series Crawl Results Table (like reference image)
+    history.length > 0 && React.createElement('div', { key: 'timeseries', style: { marginTop: 20, background: 'white', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.1)' } }, [
+      React.createElement('div', { key: 'header', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 } }, [
+        React.createElement('h3', { key: 'title', style: { margin: 0, fontSize: 20, fontWeight: 700, color: '#111827' } }, '📊 Kết quả Crawl theo Store'),
+        React.createElement('div', { key: 'actions', style: { display: 'flex', gap: 8 } }, [
+          React.createElement('button', { 
+            key: 'json',
+            onClick: () => {
+              const dataStr = JSON.stringify(history, null, 2);
+              const blob = new Blob([dataStr], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `crawl-data-${new Date().toISOString().slice(0,10)}.json`;
+              a.click();
+            },
+            style: { padding: '8px 16px', borderRadius: 8, border: 'none', background: '#10b981', color: 'white', cursor: 'pointer', fontWeight: 600, fontSize: 13 }
+          }, '⬇ Export JSON'),
+          React.createElement('button', { 
+            key: 'excel',
+            onClick: () => alert('Excel export coming soon!'),
+            style: { padding: '8px 16px', borderRadius: 8, border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', fontWeight: 600, fontSize: 13 }
+          }, '⬇ Excel M3')
+        ])
+      ]),
+      
+      (() => {
+        // Build time-series data: { shopKey: { name, url, dates: { '2025-10-23': { sold, growth } } } }
+        const shopData = {};
+        const allDates = new Set();
+        
+        for (const it of history) {
+          const shopKey = it.shopId || it.shopSlug || it.shopName || 'Unknown';
+          const date = (it.updatedAt || it.createdAt).slice(0, 10); // YYYY-MM-DD
+          
+          if (!shopData[shopKey]) {
+            shopData[shopKey] = {
+              name: it.shopName || it.shopSlug || 'Unknown Shop',
+              url: it.url,
+              dates: {}
+            };
+          }
+          
+          allDates.add(date);
+          
+          // Keep latest data for each date
+          if (!shopData[shopKey].dates[date] || new Date(it.updatedAt || it.createdAt) > new Date(shopData[shopKey].dates[date].timestamp)) {
+            const sold = parseSold(it.shopSold);
+            shopData[shopKey].dates[date] = {
+              sold: sold,
+              soldText: it.shopSold || '—',
+              growth: it.shopGrowth,
+              timestamp: it.updatedAt || it.createdAt
+            };
+          }
+        }
+        
+        const sortedDates = Array.from(allDates).sort();
+        const shops = Object.values(shopData).sort((a, b) => a.name.localeCompare(b.name));
+        
+        return React.createElement('div', { 
+          key: 'table-wrapper', 
+          style: { 
+            position: 'relative',
+            border: '1px solid #e5e7eb', 
+            borderRadius: 12, 
+            overflow: 'hidden',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+          } 
+        }, [
+          // Scrollable container
+          React.createElement('div', { 
+            key: 'table-container', 
+            style: { 
+              overflowX: 'auto',
+              overflowY: 'visible',
+              maxHeight: '600px',
+              // Custom scrollbar styling
+              scrollbarWidth: 'thin',
+              scrollbarColor: '#667eea #f1f5f9'
+            },
+            // Add custom scrollbar for webkit browsers
+            ref: (el) => {
+              if (el) {
+                const style = document.createElement('style');
+                style.textContent = `
+                  div[data-scrollbar="custom"]::-webkit-scrollbar {
+                    height: 12px;
+                  }
+                  div[data-scrollbar="custom"]::-webkit-scrollbar-track {
+                    background: #f1f5f9;
+                    border-radius: 6px;
+                  }
+                  div[data-scrollbar="custom"]::-webkit-scrollbar-thumb {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    border-radius: 6px;
+                  }
+                  div[data-scrollbar="custom"]::-webkit-scrollbar-thumb:hover {
+                    background: linear-gradient(135deg, #5568d3 0%, #6a4190 100%);
+                  }
+                `;
+                if (!document.getElementById('custom-scrollbar-style')) {
+                  style.id = 'custom-scrollbar-style';
+                  document.head.appendChild(style);
+                }
+                el.setAttribute('data-scrollbar', 'custom');
+              }
+            }
+          },
+          React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 13, background: 'white', minWidth: '800px' } }, [
+            // Header
+            React.createElement('thead', { key: 'thead' }, React.createElement('tr', { style: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' } }, [
+              React.createElement('th', { key: 'name', style: { padding: '14px 20px', textAlign: 'left', fontWeight: 700, fontSize: 14, position: 'sticky', left: 0, background: '#667eea', zIndex: 10, borderRight: '1px solid rgba(255,255,255,0.2)' } }, 'Store Name'),
+              React.createElement('th', { key: 'url', style: { padding: '14px 20px', textAlign: 'left', fontWeight: 700, fontSize: 14, minWidth: 250, borderRight: '1px solid rgba(255,255,255,0.2)' } }, 'Store URL'),
+              ...sortedDates.map((date, idx) => 
+                React.createElement('th', { 
+                  key: `date-${idx}`, 
+                  style: { 
+                    padding: '14px 20px', 
+                    textAlign: 'center', 
+                    fontWeight: 700, 
+                    fontSize: 14,
+                    minWidth: 120, 
+                    whiteSpace: 'nowrap',
+                    borderRight: idx < sortedDates.length - 1 ? '1px solid rgba(255,255,255,0.2)' : 'none'
+                  } 
+                }, date.slice(5)) // MM-DD
+              )
+            ])),
+            
+            // Body
+            React.createElement('tbody', { key: 'tbody' }, shops.map((shop, shopIdx) =>
+              React.createElement('tr', { 
+                key: `shop-${shopIdx}`, 
+                style: { 
+                  background: shopIdx % 2 === 0 ? 'white' : '#f9fafb',
+                  borderBottom: shopIdx < shops.length - 1 ? '1px solid #e5e7eb' : 'none',
+                  transition: 'background 0.15s, box-shadow 0.15s',
+                  cursor: 'default'
+                },
+                onMouseEnter: (e) => {
+                  e.currentTarget.style.background = '#f0f4ff';
+                  e.currentTarget.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.15)';
+                },
+                onMouseLeave: (e) => {
+                  e.currentTarget.style.background = shopIdx % 2 === 0 ? 'white' : '#f9fafb';
+                  e.currentTarget.style.boxShadow = 'none';
+                }
+              }, [
+                React.createElement('td', { 
+                  key: 'name', 
+                  style: { 
+                    padding: '14px 20px', 
+                    fontWeight: 700, 
+                    color: '#111827',
+                    fontSize: 14,
+                    position: 'sticky',
+                    left: 0,
+                    background: 'inherit',
+                    zIndex: 5,
+                    borderRight: '1px solid #e5e7eb'
+                  } 
+                }, shop.name),
+                React.createElement('td', { 
+                  key: 'url', 
+                  style: { 
+                    padding: '14px 20px', 
+                    maxWidth: 250, 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis', 
+                    whiteSpace: 'nowrap',
+                    borderRight: '1px solid #e5e7eb'
+                  } 
+                }, React.createElement('a', { href: shop.url, target: '_blank', style: { color: '#3b82f6', textDecoration: 'none', fontWeight: 500 }, title: shop.url }, shop.url)),
+                ...sortedDates.map((date, dateIdx) => {
+                  const dayData = shop.dates[date];
+                  if (!dayData) {
+                    return React.createElement('td', { 
+                      key: `cell-${dateIdx}`, 
+                      style: { 
+                        padding: '14px 20px', 
+                        textAlign: 'center', 
+                        color: '#d1d5db',
+                        fontSize: 16,
+                        borderRight: dateIdx < sortedDates.length - 1 ? '1px solid #e5e7eb' : 'none'
+                      } 
+                    }, '—');
+                  }
+                  
+                  return React.createElement('td', { 
+                    key: `cell-${dateIdx}`, 
+                    style: { 
+                      padding: '14px 20px', 
+                      textAlign: 'center',
+                      borderRight: dateIdx < sortedDates.length - 1 ? '1px solid #e5e7eb' : 'none'
+                    } 
+                  }, [
+                    React.createElement('div', { key: 'sold', style: { fontWeight: 700, color: '#111827', fontSize: 14, marginBottom: 4 } }, dayData.soldText),
+                    dayData.growth && React.createElement('div', { 
+                      key: 'growth', 
+                      style: { 
+                        fontSize: 12, 
+                        color: dayData.growth.diff >= 0 ? '#10b981' : '#ef4444',
+                        fontWeight: 600,
+                        padding: '2px 8px',
+                        borderRadius: 6,
+                        background: dayData.growth.diff >= 0 ? '#d1fae5' : '#fee2e2',
+                        display: 'inline-block'
+                      } 
+                    }, `${dayData.growth.diff >= 0 ? '+' : ''}${dayData.growth.diff >= 1000 ? (dayData.growth.diff/1000).toFixed(1)+'K' : dayData.growth.diff}`)
+                  ]);
+                })
+              ])
+            ))
+          ])
+          )
+        ]);
+      })()
+    ]),
+    ]), // End Results Tab
+
+    // History Tab Content
+    activeTab === 'history' && React.createElement(React.Fragment, null, [
     // History Table (with Group by Shop toggle)
     React.createElement('div', { key: 'hist', style: { marginTop: 20, background: 'rgba(255,255,255,0.7)', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.1)' } }, [
       React.createElement('div', { key: 'hist-head', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 } }, [
@@ -2112,7 +2652,7 @@ function App() {
               ),
               'Link','Shop','Số SP','SP','Đã bán (Shop)','Đã bán (SP)','Thời gian','Note','Hành động'
             ].map((h, idx) => typeof h === 'string' ? React.createElement('th', { key: 'hh'+idx, style: { background: 'var(--color-primary)', color: '#fff', padding: 14, textAlign: 'left', fontSize: 13, fontWeight: '600', borderLeft: idx===0 ? 'none' : '1px solid rgba(255,255,255,0.2)' } }, h) : h))),
-            React.createElement('tbody', { key: 'tb' }, history.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { background: idx % 2 === 0 ? '#fbfbff' : '#fff', transition: 'background 0.2s', borderBottom: '1px solid #f3f4f6' } }, [
+            React.createElement('tbody', { key: 'tb' }, paginatedHistory.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { background: idx % 2 === 0 ? '#fbfbff' : '#fff', transition: 'background 0.2s', borderBottom: '1px solid #f3f4f6' } }, [
               React.createElement('td', { style: { padding: 12, textAlign: 'center', borderRight: '1px solid #f3f4f6' } },
                 React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
               ),
@@ -2150,7 +2690,7 @@ function App() {
         // Grouped view
         (() => {
           const groups = {};
-          for (const it of history) {
+          for (const it of paginatedHistory) {
             const key = it.shopId || it.shopSlug || it.shopName || 'unknown';
             if (!groups[key]) groups[key] = { key, shopId: it.shopId || null, shopSlug: it.shopSlug || null, shopName: it.shopName || it.shopSlug || 'Unknown Shop', items: [] };
             groups[key].items.push(it);
@@ -2210,8 +2750,27 @@ function App() {
               ]),
               !collapsedGroups[g.key] && React.createElement('div', { key: 'list', style: { overflowX: 'auto' } },
                 React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0 } }, [
-                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, ['Chọn','Link','Sản phẩm','Đã bán (Shop)','Đã bán (SP)','Tăng trưởng','Thời gian','Note','Hành động'].map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: 'var(--color-gray-100)', color: 'var(--color-gray-700)', padding: 12, textAlign: 'left', fontSize: 13, fontWeight: '600', borderBottom: '1px solid var(--color-gray-200)' } }, h)))),
-                  React.createElement('tbody', { key: 'tb' }, g.items.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { borderBottom: '1px solid #f3f4f6' } }, [
+                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, (compactView ? ['Chọn','Sản phẩm','Đã bán (Shop)','Tăng trưởng Shop','Thời gian'] : ['Chọn','Link','Sản phẩm','Đã bán (Shop)','Đã bán (SP)','Tăng trưởng SP','Tăng trưởng Shop','Thời gian','Note','Hành động']).map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: 'var(--color-gray-100)', color: 'var(--color-gray-700)', padding: 12, textAlign: 'left', fontSize: 13, fontWeight: '600', borderBottom: '1px solid var(--color-gray-200)' } }, h)))),
+                  React.createElement('tbody', { key: 'tb' }, g.items.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { borderBottom: '1px solid #f3f4f6' } }, compactView ? [
+                    // Compact View
+                    React.createElement('td', { key: 'sel', style: { padding: 8, textAlign: 'center' } },
+                      React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
+                    ),
+                    React.createElement('td', { key: 'prod', style: { padding: 8, maxWidth: 300 } }, [
+                      React.createElement('div', { key: 'name', style: { fontWeight: 600, fontSize: 13, marginBottom: 2 } }, it.productName || '—'),
+                      React.createElement('a', { key: 'url', href: it.url, target: '_blank', style: { fontSize: 11, color: '#9ca3af' }, title: it.url }, it.url.substring(0, 40) + '...')
+                    ]),
+                    React.createElement('td', { key: 'sold', style: { padding: 8, textAlign: 'center', fontWeight: 600 } }, it.shopSold || '—'),
+                    React.createElement('td', { key: 'growth', style: { padding: 8, textAlign: 'center' } }, 
+                      it.shopGrowth 
+                        ? React.createElement('span', { 
+                            style: { fontSize: 13, fontWeight: 600, color: it.shopGrowth.diff >= 0 ? '#10b981' : '#ef4444' } 
+                          }, `${it.shopGrowth.diff >= 0 ? '📈 +' : '📉 '}${it.shopGrowth.diff} (${it.shopGrowth.percent >= 0 ? '+' : ''}${it.shopGrowth.percent}%)`)
+                        : '—'
+                    ),
+                    React.createElement('td', { key: 'time', style: { padding: 8, fontSize: 12, color: '#9ca3af' } }, formatTime(it.createdAt))
+                  ] : [
+                    // Detailed View
                     React.createElement('td', { style: { padding: 12, textAlign: 'center' } },
                       React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
                     ),
@@ -2225,6 +2784,21 @@ function App() {
                     React.createElement('td', { style: { padding: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.productName || '—'),
                     React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, it.shopSold || '—'),
                     React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, it.productSold || '—'),
+                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, 
+                      it.productGrowth 
+                        ? React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' } }, [
+                            React.createElement('span', { key: 'icon', style: { fontSize: 16 } }, it.productGrowth.diff >= 0 ? '📈' : '📉'),
+                            React.createElement('span', { 
+                              key: 'val', 
+                              style: { fontSize: 12, fontWeight: 600, color: it.productGrowth.diff >= 0 ? '#10b981' : '#ef4444' } 
+                            }, `${it.productGrowth.diff >= 0 ? '+' : ''}${it.productGrowth.diff}`),
+                            React.createElement('span', { 
+                              key: 'pct', 
+                              style: { fontSize: 11, color: '#6b7280' } 
+                            }, `(${it.productGrowth.percent >= 0 ? '+' : ''}${it.productGrowth.percent}%)`)
+                          ])
+                        : '—'
+                    ),
                     React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, 
                       it.shopGrowth 
                         ? React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' } }, [
@@ -2261,8 +2835,58 @@ function App() {
             ]))
           ]);
         })()
-      )
+      ),
+      
+      // Pagination Controls
+      processedHistory.length > itemsPerPage && React.createElement('div', { key: 'pagination', style: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 20, padding: '16px 0' } }, [
+        React.createElement('button', {
+          key: 'prev',
+          onClick: () => setCurrentPage(p => Math.max(1, p - 1)),
+          disabled: currentPage === 1,
+          style: { padding: '8px 16px', borderRadius: 8, border: '1px solid #e5e7eb', background: currentPage === 1 ? '#f9fafb' : 'white', cursor: currentPage === 1 ? 'not-allowed' : 'pointer', fontWeight: 600, color: currentPage === 1 ? '#9ca3af' : '#374151' }
+        }, '← Trước'),
+        
+        React.createElement('div', { key: 'pages', style: { display: 'flex', gap: 6 } },
+          Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+            let pageNum;
+            if (totalPages <= 7) {
+              pageNum = i + 1;
+            } else if (currentPage <= 4) {
+              pageNum = i + 1;
+            } else if (currentPage >= totalPages - 3) {
+              pageNum = totalPages - 6 + i;
+            } else {
+              pageNum = currentPage - 3 + i;
+            }
+            
+            return React.createElement('button', {
+              key: pageNum,
+              onClick: () => setCurrentPage(pageNum),
+              style: {
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: '1px solid #e5e7eb',
+                background: currentPage === pageNum ? '#667eea' : 'white',
+                color: currentPage === pageNum ? 'white' : '#374151',
+                cursor: 'pointer',
+                fontWeight: 600,
+                minWidth: 40
+              }
+            }, pageNum);
+          })
+        ),
+        
+        React.createElement('button', {
+          key: 'next',
+          onClick: () => setCurrentPage(p => Math.min(totalPages, p + 1)),
+          disabled: currentPage === totalPages,
+          style: { padding: '8px 16px', borderRadius: 8, border: '1px solid #e5e7eb', background: currentPage === totalPages ? '#f9fafb' : 'white', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', fontWeight: 600, color: currentPage === totalPages ? '#9ca3af' : '#374151' }
+        }, 'Sau →'),
+        
+        React.createElement('span', { key: 'info', style: { marginLeft: 12, fontSize: 14, color: '#6b7280' } }, `Trang ${currentPage} / ${totalPages} (${processedHistory.length} kết quả)`)
+      ])
     ])
+    ]) // End History Tab
   );
 }
 

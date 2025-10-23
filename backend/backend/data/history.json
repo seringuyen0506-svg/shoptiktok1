@@ -8,9 +8,9 @@
     "productName": "Faith Flag Hoodie – Patriotic Christian Cross Design Featuring American Flag and Bold Faith Quote, Perfect for Faithful Patriots, Church Goers and Country Lifestyle Fans, Unisex Hoodie",
     "shopSold": "500",
     "productSold": "18",
-    "note": "Shop crawl",
+    "note": "Shop crawl | Growth: 0 (0.0%)",
     "createdAt": "2025-10-22T08:51:09.400Z",
-    "updatedAt": "2025-10-23T03:17:57.715Z",
+    "updatedAt": "2025-10-23T03:25:56.263Z",
     "snapshots": [
       {
         "date": "2025-10-22",
@@ -22,9 +22,16 @@
         "date": "2025-10-23",
         "shopSold": "500",
         "productSold": "18",
-        "createdAt": "2025-10-23T03:17:57.715Z"
+        "createdAt": "2025-10-23T03:17:57.715Z",
+        "updatedAt": "2025-10-23T03:25:56.255Z"
       }
-    ]
+    ],
+    "shopGrowth": {
+      "previous": "500",
+      "current": "500",
+      "diff": 0,
+      "percent": 0
+    }
   },
   {
     "id": "h_1761123105185_id8a2p",
@@ -37,15 +44,28 @@
     "productSold": "20",
     "note": "",
     "createdAt": "2025-10-22T08:51:45.185Z",
-    "updatedAt": "2025-10-22T08:51:45.185Z",
+    "updatedAt": "2025-10-23T04:58:17.268Z",
     "snapshots": [
       {
         "date": "2025-10-22",
         "shopSold": "500",
         "productSold": "20",
         "createdAt": "2025-10-22T08:51:45.185Z"
+      },
+      {
+        "date": "2025-10-23",
+        "shopSold": "500",
+        "productSold": "20",
+        "createdAt": "2025-10-23T04:52:21.552Z",
+        "updatedAt": "2025-10-23T04:58:17.268Z"
       }
-    ]
+    ],
+    "productGrowth": {
+      "previous": "20",
+      "current": "20",
+      "diff": 0,
+      "percent": 0
+    }
   },
   {
     "id": "h_1761123138056_doip3q",
@@ -58,15 +78,28 @@
     "productSold": "20",
     "note": "",
     "createdAt": "2025-10-22T08:52:18.056Z",
-    "updatedAt": "2025-10-22T08:52:18.056Z",
+    "updatedAt": "2025-10-23T04:58:44.976Z",
     "snapshots": [
       {
         "date": "2025-10-22",
         "shopSold": "500",
         "productSold": "20",
         "createdAt": "2025-10-22T08:52:18.056Z"
+      },
+      {
+        "date": "2025-10-23",
+        "shopSold": "500",
+        "productSold": "20",
+        "createdAt": "2025-10-23T04:53:03.514Z",
+        "updatedAt": "2025-10-23T04:58:44.976Z"
       }
-    ]
+    ],
+    "productGrowth": {
+      "previous": "20",
+      "current": "20",
+      "diff": 0,
+      "percent": 0
+    }
   },
   {
     "id": "h_1761123165631_amz7mt",
@@ -79,15 +112,34 @@
     "productSold": "55",
     "note": "",
     "createdAt": "2025-10-22T08:52:45.631Z",
-    "updatedAt": "2025-10-22T08:52:45.631Z",
+    "updatedAt": "2025-10-23T04:59:12.081Z",
     "snapshots": [
       {
         "date": "2025-10-22",
         "shopSold": "2500",
         "productSold": "55",
         "createdAt": "2025-10-22T08:52:45.631Z"
+      },
+      {
+        "date": "2025-10-23",
+        "shopSold": "2500",
+        "productSold": "55",
+        "createdAt": "2025-10-23T03:32:47.178Z",
+        "updatedAt": "2025-10-23T04:59:12.081Z"
       }
-    ]
+    ],
+    "productGrowth": {
+      "previous": "55",
+      "current": "55",
+      "diff": 0,
+      "percent": 0
+    },
+    "shopGrowth": {
+      "previous": "2500",
+      "current": "2500",
+      "diff": 0,
+      "percent": 0
+    }
   },
   {
     "id": "h_1761141172712_zi51eb",
@@ -119,9 +171,9 @@
     "productName": "Vintage YHWH Sweatshirt, Christian Crewneck, Yahweh God, Bible Verse, Church staff, Religious apparel, Worship shirt, Top Pullover- Cotton",
     "shopSold": "16900",
     "productSold": "28",
-    "note": "Shop crawl",
+    "note": "Shop crawl | Growth: 0 (0.0%)",
     "createdAt": "2025-10-22T13:53:22.764Z",
-    "updatedAt": "2025-10-23T03:16:58.441Z",
+    "updatedAt": "2025-10-23T03:32:44.715Z",
     "snapshots": [
       {
         "date": "2025-10-22",
@@ -133,7 +185,73 @@
         "date": "2025-10-23",
         "shopSold": "16900",
         "productSold": "28",
-        "createdAt": "2025-10-23T03:16:58.441Z"
+        "createdAt": "2025-10-23T03:16:58.441Z",
+        "updatedAt": "2025-10-23T03:32:44.698Z"
+      }
+    ],
+    "productGrowth": {
+      "previous": "28",
+      "current": "28",
+      "diff": 0,
+      "percent": 0
+    },
+    "shopGrowth": {
+      "previous": "16900",
+      "current": "16900",
+      "diff": 0,
+      "percent": 0
+    }
+  },
+  {
+    "id": "h_1761195257489_4sq5qs",
+    "url": "https://vm.tiktok.com/ZTHnhacPEUYW7-ENRYo/",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "Haunted Haven",
+    "productName": "Firm in Faith Fierce in Justice Sweatshirt , Christian American Flag Sweater , Charlie Kirk Tribute Memorial Pullover , Patriotic Faith Apparel",
+    "shopSold": "15800",
+    "productSold": "33",
+    "note": "",
+    "productGrowth": {
+      "previous": "33",
+      "current": "33",
+      "diff": 0,
+      "percent": 0
+    },
+    "shopGrowth": null,
+    "createdAt": "2025-10-23T04:54:17.489Z",
+    "updatedAt": "2025-10-23T04:59:41.441Z",
+    "snapshots": [
+      {
+        "date": "2025-10-23",
+        "shopSold": "15800",
+        "productSold": "33",
+        "createdAt": "2025-10-23T04:54:17.489Z",
+        "updatedAt": "2025-10-23T04:59:41.441Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761195295465_iljdey",
+    "url": "https://vm.tiktok.com/ZTHnhmdqdq1MK-FtjvN/",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "Maria Shirt Store",
+    "productName": "Faith Over Fear Distressed American Flag T-Shirt, Vintage Faith US Flag 2 Sides Shirt, American Pride Faith Christian Graphic Tees, Jesus T-Shirt For Men Women, Patriotic Christian Shirt",
+    "shopSold": "3400",
+    "productSold": "",
+    "note": "",
+    "productGrowth": null,
+    "shopGrowth": null,
+    "createdAt": "2025-10-23T04:54:55.465Z",
+    "updatedAt": "2025-10-23T05:00:20.082Z",
+    "snapshots": [
+      {
+        "date": "2025-10-23",
+        "shopSold": "3400",
+        "productSold": null,
+        "createdAt": "2025-10-23T04:54:55.465Z",
+        "updatedAt": "2025-10-23T05:00:20.082Z"
       }
     ]
   }
