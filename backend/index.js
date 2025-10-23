@@ -933,9 +933,30 @@ function createLaunchOptions(usePersistent = true) {
       '--disable-gpu',
       '--window-size=1920x1080',
       '--disable-blink-features=AutomationControlled',
-      '--ignore-certificate-errors'
+      '--ignore-certificate-errors',
+      
+      // ✅ CRITICAL: Disable automation detection
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor',
+      
+      // ✅ More stealth flags
+      '--disable-blink-features=AutomationControlled',
+      '--exclude-switches=enable-automation',
+      '--disable-infobars',
+      '--disable-dev-shm-usage',
+      '--disable-browser-side-navigation',
+      '--disable-gpu-sandbox',
+      
+      // ✅ User agent hints
+      '--user-agent-metadata={"platform":"Windows","platformVersion":"10.0.0","architecture":"x86","model":"","mobile":false}',
+      
+      // ✅ Allow extensions to work properly
+      '--enable-features=NetworkService,NetworkServiceInProcess',
+      '--force-color-profile=srgb'
     ],
     ignoreHTTPSErrors: true,
+    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=AutomationControlled'],
     executablePath: resolveChromiumExecutablePath() || undefined
   };
 
@@ -1781,7 +1802,7 @@ app.post('/api/crawl', async (req, res) => {
   // Set user agent như browser thật
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
         
-        // Ẩn dấu hiệu automation + US fingerprinting
+        // ✅ ENHANCED: Anti-detection fingerprinting with advanced techniques
         await page.evaluateOnNewDocument((lang) => {
           // Hide automation
           Object.defineProperty(navigator, 'webdriver', { get: () => false });
@@ -1809,7 +1830,7 @@ app.post('/api/crawl', async (req, res) => {
           Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
           
           // Chrome object
-          window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {} };
+          window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
           
           // Permissions
           const originalQuery = window.navigator.permissions.query;
@@ -1818,6 +1839,47 @@ app.post('/api/crawl', async (req, res) => {
               Promise.resolve({ state: Notification.permission }) :
               originalQuery(parameters)
           );
+          
+          // ✅ NEW: Canvas fingerprint randomization
+          const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+          HTMLCanvasElement.prototype.toDataURL = function(type) {
+            if (type === 'image/png' && this.width === 280 && this.height === 60) {
+              // Likely fingerprinting canvas - add tiny noise
+              const context = this.getContext('2d');
+              const imageData = context.getImageData(0, 0, this.width, this.height);
+              for (let i = 0; i < imageData.data.length; i += 4) {
+                imageData.data[i] += Math.floor(Math.random() * 3) - 1;
+              }
+              context.putImageData(imageData, 0, 0);
+            }
+            return originalToDataURL.apply(this, arguments);
+          };
+          
+          // ✅ NEW: WebGL fingerprint (realistic values)
+          const getParameter = WebGLRenderingContext.prototype.getParameter;
+          WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            if (parameter === 37445) return 'Intel Inc.'; // UNMASKED_VENDOR_WEBGL
+            if (parameter === 37446) return 'Intel Iris OpenGL Engine'; // UNMASKED_RENDERER_WEBGL
+            return getParameter.apply(this, arguments);
+          };
+          
+          // ✅ NEW: Battery API (realistic desktop values)
+          Object.defineProperty(navigator, 'getBattery', {
+            get: () => () => Promise.resolve({
+              charging: true,
+              chargingTime: 0,
+              dischargingTime: Infinity,
+              level: 1
+            })
+          });
+          
+          // ✅ NEW: Platform & vendor
+          Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+          Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+          
+          // ✅ NEW: Screen color depth
+          Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+          Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
           
           // Timezone handled by page.emulateTimezone('America/New_York')
         }, langPref);
