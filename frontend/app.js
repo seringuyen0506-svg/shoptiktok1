@@ -677,6 +677,92 @@ function App() {
     await handleCrawl(urls);
   };
 
+  const handleBulkCrawlShops = async () => {
+    if (selectedIds.length === 0) {
+      alert('⚠️ Vui lòng chọn ít nhất 1 shop!');
+      return;
+    }
+
+    // Extract unique shop URLs from selected items
+    const selectedItems = history.filter(h => selectedIds.includes(h.id));
+    const shopUrlsMap = new Map();
+    
+    for (const item of selectedItems) {
+      // Extract shop URL from product URL
+      const shopUrl = item.url.match(/https:\/\/www\.tiktok\.com\/@[^/]+/)?.[0];
+      if (shopUrl && !shopUrlsMap.has(shopUrl)) {
+        shopUrlsMap.set(shopUrl, {
+          url: shopUrl,
+          shopName: item.shopName || item.shopSlug || 'Unknown'
+        });
+      }
+    }
+
+    const shopUrls = Array.from(shopUrlsMap.values());
+    
+    if (shopUrls.length === 0) {
+      alert('❌ Không tìm thấy shop URL hợp lệ từ các mục đã chọn!');
+      return;
+    }
+
+    if (!confirm(`🚀 Crawl ${shopUrls.length} shop(s) đã chọn?\n\n${shopUrls.map(s => s.shopName).join('\n')}`)) {
+      return;
+    }
+
+    setShopCrawlProgress(`🔄 Đang crawl ${shopUrls.length} shop(s)...`);
+    setCrawlingShop(true);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < shopUrls.length; i++) {
+      const shop = shopUrls[i];
+      setShopCrawlProgress(`🔍 [${i + 1}/${shopUrls.length}] Đang crawl: ${shop.shopName}...`);
+
+      try {
+        const res = await fetch('/api/crawl-shop-only', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: shop.url,
+            proxy: proxy || undefined,
+            apiKey: apiKey || undefined
+          }),
+          credentials: 'include'
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          successCount++;
+          setShopCrawlProgress(`✅ [${i + 1}/${shopUrls.length}] ${shop.shopName}: ${data.data.shopSold} sold`);
+        } else {
+          errorCount++;
+          console.error(`Error crawling ${shop.shopName}:`, data.error);
+        }
+
+        // Delay between requests to avoid rate limiting
+        if (i < shopUrls.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      } catch (e) {
+        errorCount++;
+        console.error(`Error crawling ${shop.shopName}:`, e.message);
+      }
+    }
+
+    setCrawlingShop(false);
+    setShopCrawlProgress(`🎉 Hoàn thành! ✅ ${successCount} shop | ❌ ${errorCount} lỗi`);
+    
+    // Reload history to show updated data
+    await loadHistory();
+    
+    // Clear selection after crawl
+    setSelectedIds([]);
+
+    setTimeout(() => setShopCrawlProgress(''), 5000);
+  };
+
   const copyToClipboard = async (text, id) => {
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1331,6 +1417,72 @@ function App() {
                   style: { marginBottom: 4, fontSize: '14px' } 
                 }, '🕐 Timezone: ', React.createElement('strong', null, ipInfo.timezone))
               )
+        )
+      ]
+    }),
+
+    // TikTok Login Section
+    React.createElement(GlassCard, {
+      key: 'tiktok-login',
+      children: [
+        React.createElement('h3', {
+          key: 'login-title',
+          style: {
+            marginBottom: '16px',
+            fontSize: '18px',
+            fontWeight: '600',
+            color: '#333'
+          }
+        }, '🔐 TikTok Login'),
+        React.createElement('div', {
+          key: 'login-desc',
+          style: {
+            marginBottom: '16px',
+            padding: '12px 16px',
+            background: '#e3f2fd',
+            borderRadius: '8px',
+            fontSize: '14px',
+            color: '#1565c0'
+          }
+        }, '💡 Login vào TikTok để tránh bị chặn khi crawl. Browser sẽ lưu cookies tự động.'),
+        React.createElement('div', {
+          key: 'login-buttons',
+          style: { display: 'flex', gap: '12px', flexWrap: 'wrap' }
+        },
+          React.createElement(Button, {
+            onClick: async () => {
+              try {
+                const res = await fetch('/api/open-browser-for-login', {
+                  method: 'POST',
+                  credentials: 'include'
+                });
+                const data = await res.json();
+                if (data.success) {
+                  alert('✅ Browser đã mở! Vui lòng login vào TikTok.\n\n⏰ Browser sẽ tự động đóng sau 5 phút hoặc bạn có thể đóng thủ công.');
+                } else {
+                  alert('❌ Lỗi: ' + (data.error || 'Không thể mở browser'));
+                }
+              } catch (e) {
+                alert('❌ Lỗi kết nối: ' + e.message);
+              }
+            },
+            variant: 'primary'
+          }, '🌐 Mở Browser để Login'),
+          React.createElement(Button, {
+            onClick: async () => {
+              try {
+                const res = await fetch('/api/close-login-browser', {
+                  method: 'POST',
+                  credentials: 'include'
+                });
+                const data = await res.json();
+                alert(data.message || 'Browser đã đóng');
+              } catch (e) {
+                alert('❌ Lỗi: ' + e.message);
+              }
+            },
+            variant: 'secondary'
+          }, '❌ Đóng Browser')
         )
       ]
     }),
@@ -2644,6 +2796,7 @@ function App() {
       ]),
       selectedIds.length > 0 && React.createElement('div', { key: 'bulkbar', style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', border: '1px solid #e5e7eb' } }, [
         React.createElement('span', { key: 'selcount', style: { fontWeight: 600, color: '#374151' } }, `${selectedIds.length} mục đã chọn`),
+        React.createElement(Button, { key: 'bulkCrawlShops', variant: 'primary', onClick: handleBulkCrawlShops, disabled: crawlingShop }, crawlingShop ? '⏳ Đang crawl...' : '🏪 Crawl Shops'),
         React.createElement(Button, { key: 'bulkRecrawl', variant: 'secondary', onClick: handleBulkRecrawl }, '↻ Crawl lại đã chọn'),
         React.createElement(Button, { key: 'bulkDelete', variant: 'secondary', onClick: handleBulkDelete, style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa đã chọn')
       ]),

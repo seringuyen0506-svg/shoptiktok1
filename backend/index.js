@@ -5,6 +5,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import * as cheerio from 'cheerio';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 // Import vanilla puppeteer to access executablePath helper
@@ -13,6 +14,17 @@ import dotenv from 'dotenv';
 
 // Load environment variables
 dotenv.config();
+
+// Get __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Create user data directory for persistent sessions
+const USER_DATA_DIR = path.join(__dirname, 'tiktok_user_data');
+if (!fs.existsSync(USER_DATA_DIR)) {
+  fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+  console.log('✓ Created user data directory:', USER_DATA_DIR);
+}
 
 // Sử dụng stealth plugin để tránh bị phát hiện
 puppeteer.use(StealthPlugin());
@@ -954,6 +966,45 @@ async function solveCaptchaIfNeeded(page, apiKey) {
   }
 }
 
+// Helper function to create launch options with persistent session
+function createLaunchOptions(proxy = null, usePersistent = true) {
+  const options = {
+    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--disable-gpu',
+      '--window-size=1920x1080',
+      '--disable-blink-features=AutomationControlled',
+      '--ignore-certificate-errors'
+    ],
+    ignoreHTTPSErrors: true,
+    executablePath: resolveChromiumExecutablePath() || undefined
+  };
+
+  // Add persistent user data directory if enabled
+  if (usePersistent) {
+    options.userDataDir = USER_DATA_DIR;
+    console.log('✓ Using persistent session:', USER_DATA_DIR);
+  }
+
+  // Parse proxy if provided
+  if (proxy && proxy.trim()) {
+    const parsed = parseProxy(proxy);
+    if (parsed && parsed.hasAuth) {
+      options.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
+      console.log('✓ Proxy configured:', `${parsed.host}:${parsed.port}`);
+    } else if (parsed) {
+      options.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
+      console.log('✓ Proxy configured (no auth):', `${parsed.host}:${parsed.port}`);
+    }
+  }
+
+  return options;
+}
+
 // Check IP endpoint
 app.post('/api/check-ip', async (req, res) => {
   const { proxy } = req.body;
@@ -961,29 +1012,13 @@ app.post('/api/check-ip', async (req, res) => {
   console.log('🔍 Checking IP with proxy:', proxy || 'No proxy');
   
   try {
-    // Launch browser with proxy
-    const launchOptions = {
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--ignore-certificate-errors'
-      ],
-      ignoreHTTPSErrors: true,
-      executablePath: resolveChromiumExecutablePath() || undefined
-    };
+    // Use helper function without persistent session for IP check
+    const launchOptions = createLaunchOptions(proxy, false);
     
-    // Parse proxy if provided
+    // Validate proxy format
     if (proxy && proxy.trim()) {
       const parsed = parseProxy(proxy);
-      if (parsed && parsed.hasAuth) {
-        launchOptions.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
-        console.log('✓ Proxy configured:', `${parsed.host}:${parsed.port}`);
-      } else if (parsed) {
-        launchOptions.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
-        console.log('✓ Proxy configured (no auth):', `${parsed.host}:${parsed.port}`);
-      } else {
+      if (!parsed) {
         return res.json({ error: 'Invalid proxy format. Use: host:port:username:password' });
       }
     }
@@ -1836,35 +1871,20 @@ app.post('/api/crawl', async (req, res) => {
         if (targetUrl !== url) {
           console.log('  → Resolved short URL to:', targetUrl);
         }
-        // Cấu hình Puppeteer với stealth mode + SSL bypass
-        const launchOptions = {
-          headless: 'new', // Sử dụng headless mode mới
-          ignoreHTTPSErrors: true, // ⭐ Bỏ qua SSL errors
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor',
-            '--ignore-certificate-errors',           // ⭐ Ignore cert errors
-            '--ignore-certificate-errors-spki-list', // ⭐ Ignore cert validation
-            '--disable-gpu',
-            '--disable-dev-shm-usage',
-            '--disable-software-rasterizer',
-            '--disable-extensions',
-            `--lang=${langPref}`
-          ],
-          executablePath: resolveChromiumExecutablePath() || undefined
-        };
         
-        // Parse proxy đúng format: host:port:username:password
-        if (proxy) {
-          const parsed = parseProxy(proxy);
-          if (parsed) {
-            launchOptions.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
-          }
-        }
+        // Use createLaunchOptions with persistent session (will reuse TikTok login cookies)
+        const launchOptions = createLaunchOptions(proxy, true); // true = use persistent userDataDir
+        
+        // Add additional args for locale/lang
+        launchOptions.args.push(
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-web-security',
+          '--disable-features=VizDisplayCompositor',
+          '--ignore-certificate-errors-spki-list',
+          '--disable-software-rasterizer',
+          '--disable-extensions',
+          `--lang=${langPref}`
+        );
         
         browser = await puppeteer.launch(launchOptions);
         const page = await browser.newPage();
@@ -2825,6 +2845,100 @@ app.post('/api/crawl-shop-only', async (req, res) => {
       details: error.response?.data || error.stack
     });
   }
+});
+
+// Open browser for manual TikTok login
+let loginBrowser = null;
+let loginBrowserTimeout = null;
+
+app.post('/api/open-browser-for-login', async (req, res) => {
+  try {
+    // Close existing login browser if any
+    if (loginBrowser) {
+      try {
+        await loginBrowser.close();
+      } catch (e) {
+        console.log('Previous browser already closed');
+      }
+      loginBrowser = null;
+    }
+
+    if (loginBrowserTimeout) {
+      clearTimeout(loginBrowserTimeout);
+      loginBrowserTimeout = null;
+    }
+
+    console.log('🌐 Opening browser for TikTok login...');
+    
+    // Launch browser with persistent context and headful mode
+    const launchOptions = createLaunchOptions(null, true);
+    launchOptions.headless = false; // Show browser window
+    launchOptions.defaultViewport = null; // Use full viewport
+    
+    loginBrowser = await puppeteer.launch(launchOptions);
+    const pages = await loginBrowser.pages();
+    const page = pages[0] || await loginBrowser.newPage();
+    
+    // Navigate to TikTok login page
+    await page.goto('https://www.tiktok.com/login', {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+    
+    console.log('✅ Browser opened! Please login to TikTok manually.');
+    console.log('⏰ Browser will close automatically after 5 minutes.');
+    
+    // Auto-close after 5 minutes
+    loginBrowserTimeout = setTimeout(async () => {
+      if (loginBrowser) {
+        console.log('⏰ Closing login browser after timeout...');
+        try {
+          await loginBrowser.close();
+        } catch (e) {}
+        loginBrowser = null;
+      }
+    }, 300000); // 5 minutes
+    
+    res.json({
+      success: true,
+      message: 'Browser opened for login. Please complete login manually. Browser will close after 5 minutes or you can close it manually.',
+      timeout: 300000
+    });
+  } catch (error) {
+    console.error('❌ Error opening browser:', error.message);
+    res.status(500).json({
+      error: error.message || 'Failed to open browser'
+    });
+  }
+});
+
+app.post('/api/close-login-browser', async (req, res) => {
+  try {
+    if (loginBrowser) {
+      await loginBrowser.close();
+      loginBrowser = null;
+      
+      if (loginBrowserTimeout) {
+        clearTimeout(loginBrowserTimeout);
+        loginBrowserTimeout = null;
+      }
+      
+      console.log('✅ Login browser closed manually');
+      res.json({ success: true, message: 'Browser closed' });
+    } else {
+      res.json({ success: false, message: 'No browser is open' });
+    }
+  } catch (error) {
+    console.error('❌ Error closing browser:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/login-browser-status', (req, res) => {
+  res.json({
+    isOpen: loginBrowser !== null,
+    message: loginBrowser ? 'Browser is open for login' : 'No browser is open'
+  });
 });
 
 // Health check endpoint for Cloudflare Tunnel testing
