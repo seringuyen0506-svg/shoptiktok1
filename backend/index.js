@@ -2712,60 +2712,35 @@ app.post('/api/crawl-shop-only', async (req, res) => {
     const existing = history.find(it => it.url === nurl);
     const previousShopSold = existing ? parseSold(existing.shopSold) : null;
     
-    console.log(`📊 Previous shop sold: ${previousShopSold}`);
+    console.log(`📊 Previous shop sold: ${previousShopSold || 'N/A'}`);
     
-    // Use internal crawl - make request to own /api/crawl endpoint
-    const crawlPayload = {
-      links: url,
+    // Call /api/crawl endpoint via HTTP to reuse all crawl logic
+    const crawlResponse = await axios.post('http://localhost:5000/api/crawl', {
+      links: [url],
       proxy: proxy || '',
       apiKey: apiKey || '',
-      note: note || 'Shop crawl'
-    };
-    
-    // Call internal crawl endpoint
-    const crawlResults = await new Promise((resolve, reject) => {
-      const mockReq = {
-        body: crawlPayload,
-        headers: {},
-        ip: req.ip
-      };
-      
-      const mockRes = {
-        json: (data) => resolve(data),
-        status: (code) => ({
-          json: (data) => {
-            if (code >= 400) reject(new Error(data.error || 'Crawl failed'));
-            else resolve(data);
-          }
-        })
-      };
-      
-      // Find the crawl handler from app routes
-      const crawlRoute = app._router.stack.find(r => 
-        r.route && r.route.path === '/api/crawl' && r.route.methods.post
-      );
-      
-      if (crawlRoute) {
-        crawlRoute.route.stack[0].handle(mockReq, mockRes);
-      } else {
-        reject(new Error('Internal crawl endpoint not found'));
-      }
+      note: note || 'Shop crawl',
+      concurrency: 1
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 300000 // 5 minutes
     });
     
-    // Get the crawled data
-    if (!crawlResults || !crawlResults.results || crawlResults.results.length === 0) {
+    const crawlData = crawlResponse.data;
+    
+    if (!crawlData || !crawlData.results || crawlData.results.length === 0) {
       throw new Error('No results from crawl');
     }
     
-    const crawlData = crawlResults.results[0];
+    const result = crawlData.results[0];
     
-    if (crawlData.status !== 'success') {
-      throw new Error(crawlData.message || 'Crawl failed');
+    if (result.status !== 'success') {
+      throw new Error(result.message || result.reason || 'Crawl failed');
     }
     
-    const currentShopSold = parseSold(crawlData.shopSold);
+    const currentShopSold = parseSold(result.shopSold);
     
-    console.log(`✅ [Shop Only] Shop: ${crawlData.shopName}, Sold: ${crawlData.shopSold}`);
+    console.log(`✅ [Shop Only] Shop: ${result.shopName}, Sold: ${result.shopSold}`);
     
     // Calculate growth
     let growth = null;
@@ -2783,17 +2758,17 @@ app.post('/api/crawl-shop-only', async (req, res) => {
     
     res.json({
       success: true,
-      shopName: crawlData.shopName || '',
-      shopSold: crawlData.shopSold || '',
+      shopName: result.shopName || '',
+      shopSold: result.shopSold || '',
       url: url,
       growth: growth,
-      savedId: crawlData.id
+      historyId: result.id
     });
   } catch (error) {
     console.error('❌ [Shop Only] Error:', error.message);
     res.status(500).json({ 
       error: error.message || 'Failed to crawl shop data',
-      details: error.stack
+      details: error.response?.data || error.stack
     });
   }
 });
