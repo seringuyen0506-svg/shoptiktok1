@@ -29,6 +29,7 @@ function App() {
   const [hoveredHistoryId, setHoveredHistoryId] = useState(null); // show copy on hover in history
   const [groupByShop, setGroupByShop] = useState(false); // group history by shop
   const [collapsedGroups, setCollapsedGroups] = useState({}); // key:boolean collapsed
+  const [shopOnlyResults, setShopOnlyResults] = useState({}); // key: groupKey, value: { shopName, shopSold, loading, error }
   
   // Shop crawl states
   const [shopUrl, setShopUrl] = useState('');
@@ -107,21 +108,26 @@ function App() {
     await handleCrawl(urls);
   };
 
-  const handleCrawlShopOnly = async (items) => {
+  const handleCrawlShopOnly = async (groupKey, items) => {
     if (!items || items.length === 0) return;
     
     // Take first item's URL to get shop info
     const firstUrl = items[0].url;
     
     if (!proxy) {
-      alert('⚠️ Vui lòng nhập proxy trước!');
+      setShopOnlyResults(prev => ({
+        ...prev,
+        [groupKey]: { error: 'Vui lòng nhập proxy trước!', loading: false }
+      }));
       return;
     }
     
-    const confirmMsg = `Crawl tổng SOLD của shop từ:\n${firstUrl}\n\nKết quả sẽ hiển thị ngay sau khi hoàn tất.`;
-    if (!confirm(confirmMsg)) return;
+    // Set loading state
+    setShopOnlyResults(prev => ({
+      ...prev,
+      [groupKey]: { loading: true, error: null }
+    }));
     
-    setLoading(true);
     try {
       const res = await fetch('/api/crawl-shop-only', {
         method: 'POST',
@@ -142,14 +148,24 @@ function App() {
       const data = await res.json();
       
       if (data.success) {
-        alert(`✅ Shop: ${data.shopName}\n📦 Tổng đã bán: ${data.shopSold}`);
+        setShopOnlyResults(prev => ({
+          ...prev,
+          [groupKey]: { 
+            shopName: data.shopName, 
+            shopSold: data.shopSold, 
+            loading: false,
+            error: null
+          }
+        }));
       } else {
         throw new Error(data.error || 'Crawl failed');
       }
     } catch (e) {
-      alert(`❌ Lỗi: ${e.message}`);
+      setShopOnlyResults(prev => ({
+        ...prev,
+        [groupKey]: { error: e.message, loading: false }
+      }));
     }
-    setLoading(false);
   };
 
   const setGroupCollapsed = (key, val) => {
@@ -2160,8 +2176,22 @@ function App() {
                     React.createElement('span', { key: 'cnt', style: { fontSize: 12, color: '#6b7280' } }, `(${g.items.length} sản phẩm)`) 
                   ])
                 ]),
-                React.createElement('div', { key: 'actions', style: { display: 'flex', gap: 8 } }, [
-                  React.createElement(Button, { key: 'shop', variant: 'secondary', onClick: () => handleCrawlShopOnly(g.items), style: { background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' } }, '🏪 Crawl Shop'),
+                React.createElement('div', { key: 'actions', style: { display: 'flex', gap: 8, alignItems: 'center' } }, [
+                  React.createElement(Button, { 
+                    key: 'shop', 
+                    variant: 'secondary', 
+                    onClick: () => handleCrawlShopOnly(g.key, g.items), 
+                    disabled: shopOnlyResults[g.key]?.loading,
+                    style: { background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' } 
+                  }, shopOnlyResults[g.key]?.loading ? '⏳ Đang crawl...' : '🏪 Crawl Shop'),
+                  shopOnlyResults[g.key] && !shopOnlyResults[g.key].loading && (
+                    shopOnlyResults[g.key].error 
+                      ? React.createElement('span', { key: 'err', style: { fontSize: 13, color: '#ef4444', fontWeight: 500 } }, `❌ ${shopOnlyResults[g.key].error}`)
+                      : React.createElement('span', { key: 'res', style: { fontSize: 13, color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 } }, [
+                          React.createElement('span', { key: 'icon' }, '📦'),
+                          React.createElement('span', { key: 'sold' }, `Tổng: ${shopOnlyResults[g.key].shopSold}`)
+                        ])
+                  ),
                   React.createElement(Button, { key: 'recg', variant: 'secondary', onClick: () => handleRecrawlGroup(g.items) }, '↻ Crawl cả nhóm'),
                   React.createElement(Button, { key: 'delg', variant: 'secondary', onClick: () => handleDeleteGroup(g.items), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa nhóm')
                 ])
