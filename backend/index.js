@@ -2712,28 +2712,60 @@ app.post('/api/crawl-shop-only', async (req, res) => {
     const existing = history.find(it => it.url === nurl);
     const previousShopSold = existing ? parseSold(existing.shopSold) : null;
     
-    // Crawl current data
-    const result = await advancedDomExtraction(url, proxy, apiKey);
+    console.log(`📊 Previous shop sold: ${previousShopSold}`);
     
-    if (!result || !result.shopSold) {
-      throw new Error('Could not extract shop sold data');
+    // Use internal crawl - make request to own /api/crawl endpoint
+    const crawlPayload = {
+      links: url,
+      proxy: proxy || '',
+      apiKey: apiKey || '',
+      note: note || 'Shop crawl'
+    };
+    
+    // Call internal crawl endpoint
+    const crawlResults = await new Promise((resolve, reject) => {
+      const mockReq = {
+        body: crawlPayload,
+        headers: {},
+        ip: req.ip
+      };
+      
+      const mockRes = {
+        json: (data) => resolve(data),
+        status: (code) => ({
+          json: (data) => {
+            if (code >= 400) reject(new Error(data.error || 'Crawl failed'));
+            else resolve(data);
+          }
+        })
+      };
+      
+      // Find the crawl handler from app routes
+      const crawlRoute = app._router.stack.find(r => 
+        r.route && r.route.path === '/api/crawl' && r.route.methods.post
+      );
+      
+      if (crawlRoute) {
+        crawlRoute.route.stack[0].handle(mockReq, mockRes);
+      } else {
+        reject(new Error('Internal crawl endpoint not found'));
+      }
+    });
+    
+    // Get the crawled data
+    if (!crawlResults || !crawlResults.results || crawlResults.results.length === 0) {
+      throw new Error('No results from crawl');
     }
     
-    const currentShopSold = parseSold(result.shopSold);
+    const crawlData = crawlResults.results[0];
     
-    console.log(`✅ [Shop Only] Shop: ${result.shopName}, Sold: ${result.shopSold}`);
+    if (crawlData.status !== 'success') {
+      throw new Error(crawlData.message || 'Crawl failed');
+    }
     
-    // Save to history (will create snapshot)
-    const savedItem = upsertHistoryItem({
-      url: url,
-      shopId: result.shopId || null,
-      shopSlug: result.shopSlug || null,
-      shopName: result.shopName || '',
-      shopSold: result.shopSold || '',
-      productName: result.productName || 'Shop Total',
-      productSold: result.productSold || '',
-      note: note || 'Shop crawl'
-    });
+    const currentShopSold = parseSold(crawlData.shopSold);
+    
+    console.log(`✅ [Shop Only] Shop: ${crawlData.shopName}, Sold: ${crawlData.shopSold}`);
     
     // Calculate growth
     let growth = null;
@@ -2751,11 +2783,11 @@ app.post('/api/crawl-shop-only', async (req, res) => {
     
     res.json({
       success: true,
-      shopName: result.shopName || '',
-      shopSold: result.shopSold || '',
+      shopName: crawlData.shopName || '',
+      shopSold: crawlData.shopSold || '',
       url: url,
       growth: growth,
-      savedId: savedItem.id
+      savedId: crawlData.id
     });
   } catch (error) {
     console.error('❌ [Shop Only] Error:', error.message);
