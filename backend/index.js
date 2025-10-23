@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
-import { HttpsProxyAgent } from 'https-proxy-agent';
 import * as cheerio from 'cheerio';
 import fs from 'fs';
 import path from 'path';
@@ -122,61 +121,17 @@ function parseSold(text) {
   return null;
 }
 
-// ===== URL + Proxy helpers =====
-// Helper: Parse proxy string (handle complex usernames with colons)
-function parseProxy(proxyStr) {
-  if (!proxyStr || typeof proxyStr !== 'string') return null;
-  const parts = proxyStr.split(':');
-  if (parts.length < 2) return null;
-  
-  const host = parts[0];
-  const port = parts[1];
-  
-  if (parts.length >= 4) {
-    const username = parts[2];
-    // Join remaining parts as password (in case password contains :)
-    const password = parts.slice(3).join(':');
-    return { host, port, username, password, hasAuth: true };
-  }
-  
-  return { host, port, hasAuth: false };
-}
+// ===== URL helpers =====
 
-function buildProxyAgent(proxyStr) {
-  if (!proxyStr) return undefined;
-  try {
-    const parsed = parseProxy(proxyStr);
-    if (!parsed) return undefined;
-    
-    const config = {
-      host: parsed.host,
-      port: parsed.port,
-      rejectUnauthorized: false // ⭐ FIX SSL errors
-    };
-    
-    if (parsed.hasAuth) {
-      config.auth = `${encodeURIComponent(parsed.username)}:${encodeURIComponent(parsed.password)}`;
-    }
-    
-    return new HttpsProxyAgent(config);
-  } catch (e) {
-    console.error('⚠️ Proxy agent build error:', e.message);
-  }
-  return undefined;
-}
-
-async function resolveShortUrl(inputUrl, proxyStr) {
+async function resolveShortUrl(inputUrl) {
   try {
     let current = inputUrl;
-    const agent = buildProxyAgent(proxyStr);
     for (let i = 0; i < 5; i++) {
       // Only try to resolve typical short domains
       if (!/\b(vm|vt)\.tiktok\.com\b|\/t\//i.test(current)) break;
       const resp = await axios.head(current, {
         maxRedirects: 0,
         validateStatus: s => s >= 200 && s < 400,
-        httpAgent: agent,
-        httpsAgent: agent,
         timeout: 10000
       }).catch(e => e.response);
       if (resp && resp.status && resp.status >= 300 && resp.status < 400 && resp.headers?.location) {
@@ -230,40 +185,6 @@ function langFromCountry(country) {
     ES: 'es-ES', MX: 'es-MX', BR: 'pt-BR', IT: 'it-IT', NL: 'nl-NL', SE: 'sv-SE'
   };
   return map[cc] || (cc ? `en-${cc}` : 'en-US');
-}
-
-async function autoDetectPrefsFromProxy(proxyStr) {
-  // Defaults to US if detection fails
-  const fallback = {
-    lang: 'en-US',
-    timezone: 'America/New_York',
-    geolocation: { latitude: 40.7128, longitude: -74.0060, accuracy: 100 },
-    source: 'default'
-  };
-  try {
-    if (!proxyStr) return fallback;
-    const agent = buildProxyAgent(proxyStr);
-    // Use ipapi.co for quick geo/timezone
-    const resp = await axios.get('https://ipapi.co/json', {
-      httpAgent: agent,
-      httpsAgent: agent,
-      timeout: 6000,
-      validateStatus: s => s >= 200 && s < 400
-    });
-    const d = resp.data || {};
-    const country = d.country || d.country_code || '';
-    const tz = d.timezone || 'America/New_York';
-    const lat = Number(d.latitude);
-    const lon = Number(d.longitude);
-    const lang = langFromCountry(country);
-    const geo = (Number.isFinite(lat) && Number.isFinite(lon))
-      ? { latitude: lat, longitude: lon, accuracy: 100 }
-      : { latitude: 40.7128, longitude: -74.0060, accuracy: 100 };
-    return { lang, timezone: tz, geolocation: geo, source: 'ipapi' };
-  } catch (e) {
-    console.log('Locale auto-detect failed, using defaults:', e.message);
-    return fallback;
-  }
 }
 
 // ===== CAPTCHA single-flight state per page =====
@@ -967,7 +888,7 @@ async function solveCaptchaIfNeeded(page, apiKey) {
 }
 
 // Helper function to create launch options with persistent session
-function createLaunchOptions(proxy = null, usePersistent = true) {
+function createLaunchOptions(usePersistent = true) {
   const options = {
     headless: 'new',
     args: [
@@ -990,141 +911,8 @@ function createLaunchOptions(proxy = null, usePersistent = true) {
     console.log('✓ Using persistent session:', USER_DATA_DIR);
   }
 
-  // Parse proxy if provided
-  if (proxy && proxy.trim()) {
-    const parsed = parseProxy(proxy);
-    if (parsed && parsed.hasAuth) {
-      options.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
-      console.log('✓ Proxy configured:', `${parsed.host}:${parsed.port}`);
-    } else if (parsed) {
-      options.args.push(`--proxy-server=${parsed.host}:${parsed.port}`);
-      console.log('✓ Proxy configured (no auth):', `${parsed.host}:${parsed.port}`);
-    }
-  }
-
   return options;
 }
-
-// Check IP endpoint
-app.post('/api/check-ip', async (req, res) => {
-  const { proxy } = req.body;
-  
-  console.log('🔍 Checking IP with proxy:', proxy || 'No proxy');
-  
-  try {
-    // Use helper function without persistent session for IP check
-    const launchOptions = createLaunchOptions(proxy, false);
-    
-    // Validate proxy format
-    if (proxy && proxy.trim()) {
-      const parsed = parseProxy(proxy);
-      if (!parsed) {
-        return res.json({ error: 'Invalid proxy format. Use: host:port:username:password' });
-      }
-    }
-    
-    const browser = await puppeteer.launch(launchOptions);
-    const page = await browser.newPage();
-    
-    // Authenticate proxy if needed
-    if (proxy && proxy.trim()) {
-      const parsed = parseProxy(proxy);
-      if (parsed && parsed.hasAuth) {
-        await page.authenticate({
-          username: parsed.username,
-          password: parsed.password
-        });
-        console.log('✓ Proxy authenticated');
-      }
-    }
-    
-    // Check IP via api.ipify.org
-    try {
-      await page.goto('https://api.ipify.org?format=json', { 
-        waitUntil: 'networkidle2',
-        timeout: 20000 
-      });
-      
-      const ipData = await page.evaluate(() => {
-        try {
-          return JSON.parse(document.body.textContent);
-        } catch {
-          return null;
-        }
-      });
-      
-      if (ipData && ipData.ip) {
-        console.log('✓ IP detected:', ipData.ip);
-        
-        // Get more info from ipinfo.io
-        let location = 'Unknown';
-        let org = 'Unknown';
-        let timezone = '';
-        let isDatacenter = false;
-        
-        try {
-          await page.goto(`https://ipinfo.io/${ipData.ip}/json`, {
-            waitUntil: 'networkidle2',
-            timeout: 15000
-          });
-          
-          const detailData = await page.evaluate(() => {
-            try {
-              return JSON.parse(document.body.textContent);
-            } catch {
-              return {};
-            }
-          });
-          
-          if (detailData) {
-            location = `${detailData.city || ''}, ${detailData.region || ''}, ${detailData.country || ''}`.replace(/, ,/g, ',').trim();
-            org = detailData.org || 'Unknown';
-            timezone = detailData.timezone || '';
-            
-            // Check if datacenter
-            const orgLower = org.toLowerCase();
-            isDatacenter = orgLower.includes('digitalocean') ||
-                          orgLower.includes('amazon') ||
-                          orgLower.includes('google') ||
-                          orgLower.includes('webshare') ||
-                          orgLower.includes('ovh') ||
-                          orgLower.includes('hosting') ||
-                          orgLower.includes('datacenter') ||
-                          orgLower.includes('cloud');
-            
-            console.log('✓ Location:', location);
-            console.log('✓ ISP:', org);
-            console.log('✓ Datacenter?', isDatacenter);
-          }
-        } catch (e) {
-          console.log('⚠️ Could not get detailed IP info:', e.message);
-        }
-        
-        await browser.close();
-        
-        return res.json({
-          success: true,
-          ip: ipData.ip,
-          location: location,
-          org: org,
-          timezone: timezone,
-          isDatacenter: isDatacenter
-        });
-      } else {
-        throw new Error('Could not detect IP');
-      }
-    } catch (e) {
-      await browser.close();
-      throw e;
-    }
-    
-  } catch (error) {
-    console.error('❌ IP check failed:', error.message);
-    return res.json({ 
-      error: 'Không thể kiểm tra IP: ' + error.message 
-    });
-  }
-});
 
 // Check API Key endpoint
 app.post('/api/check-apikey', async (req, res) => {
@@ -1798,7 +1586,7 @@ QUAN TRỌNG: Trả lời bằng văn bản thuần (plain text), KHÔNG dùng m
 
 // Crawl endpoint
 app.post('/api/crawl', async (req, res) => {
-  const { links, proxy, apiKey, note, prefs } = req.body;
+  const { links, apiKey, note, prefs } = req.body;
   if (!Array.isArray(links)) return res.status(400).json({ error: 'links must be an array' });
   
   // Concurrency: For bulk crawling (50+ links), limit to 2-3 concurrent browsers max
@@ -1815,12 +1603,7 @@ app.post('/api/crawl', async (req, res) => {
   const results = [];
 
   // Preferences for locale/region
-  // 1) Auto-detect from proxy if available and prefs missing
-  let detected = null;
-  if (!prefs && proxy) {
-    detected = await autoDetectPrefsFromProxy(proxy).catch(() => null);
-  }
-  const basePrefs = prefs || detected || { lang: 'en-US', timezone: 'America/New_York', geolocation: { latitude: 40.7128, longitude: -74.0060, accuracy: 100 } };
+  const basePrefs = prefs || { lang: 'en-US', timezone: 'America/New_York', geolocation: { latitude: 40.7128, longitude: -74.0060, accuracy: 100 } };
   const langPref = (basePrefs && typeof basePrefs.lang === 'string' && basePrefs.lang.trim()) ? basePrefs.lang.trim() : 'en-US';
   const timezonePref = (basePrefs && typeof basePrefs.timezone === 'string' && basePrefs.timezone.trim()) ? basePrefs.timezone.trim() : 'America/New_York';
   const geolocationPref = (basePrefs && typeof basePrefs.geolocation === 'object' && basePrefs.geolocation)
@@ -1834,40 +1617,13 @@ app.post('/api/crawl', async (req, res) => {
       // Random delay giữa các request (1-3s) to stagger workers
       await randomDelay(1000, 3000);
       
-      // ✅ STEP 1: VERIFY PROXY HOẠT ĐỘNG (nếu có)
-      if (proxy) {
-        try {
-          const agent = buildProxyAgent(proxy);
-          if (agent) {
-            console.log('🔌 Verifying proxy connection...');
-            const ipCheck = await axios.get('https://api.ipify.org?format=json', {
-              httpsAgent: agent,
-              timeout: 10000
-            }).catch(e => {
-              throw new Error(`Proxy connection failed: ${e.message}`);
-            });
-            console.log(`✅ Proxy verified - IP: ${ipCheck.data.ip}`);
-          }
-        } catch (proxyError) {
-          console.error('❌ Proxy verification failed:', proxyError.message);
-          results.push({
-            url,
-            status: 'proxy_failed',
-            reason: 'proxy',
-            message: `Proxy không hoạt động: ${proxyError.message}`,
-            suggestion: 'Kiểm tra proxy credentials hoặc thử proxy khác'
-          });
-          return;
-        }
-      }
-      
       // Puppeteer crawl
       let browser;
       let html = '';
       let shopName = '', shopSold = '', productName = '', productSold = '';
       try {
         // Resolve short URLs ahead of time to reduce redirects/timeouts
-        const targetUrl = await resolveShortUrl(url, proxy);
+        const targetUrl = await resolveShortUrl(url);
         if (targetUrl !== url) {
           console.log('  → Resolved short URL to:', targetUrl);
         }
@@ -1881,7 +1637,7 @@ app.post('/api/crawl', async (req, res) => {
         } else {
           console.log('⚠️  No shared browser - launching new headless browser');
           // Use createLaunchOptions with persistent session (will reuse TikTok login cookies)
-          const launchOptions = createLaunchOptions(proxy, true); // true = use persistent userDataDir
+          const launchOptions = createLaunchOptions(true); // true = use persistent userDataDir
           
           // Add additional args for locale/lang
           launchOptions.args.push(
@@ -2138,7 +1894,7 @@ app.post('/api/crawl', async (req, res) => {
               status: 'captcha_failed',
               reason: 'captcha',
               message: 'CAPTCHA detected, solver failed: ' + (captchaSolved.error || 'Unknown error'),
-              suggestion: 'Thử lại với proxy khác, giảm concurrency, hoặc kiểm tra API key.'
+              suggestion: 'Cài extension CAPTCHA solver trong shared browser, giảm concurrency, hoặc kiểm tra API key.'
             });
             // Close browser only if it's not the shared browser
             if (browser !== sharedBrowser) {
@@ -2169,7 +1925,7 @@ app.post('/api/crawl', async (req, res) => {
               status: 'gate_stuck',
               reason: 'gate',
               message: `Still stuck at verification page after CAPTCHA solve. HTML size: ${stillGated.htmlSize}`,
-              suggestion: 'Proxy bị chặn hoặc fingerprint kém. Thử proxy residential sạch hơn, giảm concurrency xuống 1, hoặc đổi IP/region.'
+              suggestion: 'Dùng VPN extension trong shared browser, giảm concurrency xuống 1, hoặc thử region khác.'
             });
             // Close browser only if it's not the shared browser
             if (browser !== sharedBrowser) {
@@ -2248,7 +2004,7 @@ app.post('/api/crawl', async (req, res) => {
                     status: 'captcha_failed',
                     reason: 'captcha',
                     message: 'CAPTCHA detected late (after selector timeout) and solver failed: ' + (solved.error || 'Unknown'),
-                    suggestion: 'Đổi proxy residential sạch, giảm concurrency, kiểm tra API key và thử lại.'
+                    suggestion: 'Cài extension CAPTCHA solver, giảm concurrency, kiểm tra API key và thử lại.'
                   });
                   if (browser !== sharedBrowser) {
                     await browser.close();
@@ -2264,7 +2020,7 @@ app.post('/api/crawl', async (req, res) => {
                   status: 'gate_detected',
                   reason: 'gate',
                   message: `Page stuck at gate/verify. HTML size: ${gateCheck.htmlSize}B`,
-                  suggestion: 'IP/proxy bị TikTok chặn. Đổi proxy residential, giảm concurrency xuống 1, hoặc thử region khác.'
+                  suggestion: 'IP bị TikTok chặn. Dùng VPN extension, giảm concurrency xuống 1, hoặc thử region khác.'
                 });
                 if (browser !== sharedBrowser) {
                   await browser.close();
@@ -2279,7 +2035,7 @@ app.post('/api/crawl', async (req, res) => {
                 status: 'gate_detected',
                 reason: 'gate',
                 message: `Page stuck at gate/verify. HTML size: ${gateCheck.htmlSize}B`,
-                suggestion: 'Cần thêm API Key hmcaptcha để thử solve. Ngoài ra, đổi proxy residential/giảm concurrency.'
+                suggestion: 'Cần thêm API Key hmcaptcha để thử solve. Ngoài ra, dùng VPN extension/giảm concurrency.'
               });
               await browser.close();
               return;
@@ -2576,7 +2332,7 @@ app.post('/api/crawl', async (req, res) => {
           status: 'gate_html_small',
           reason: 'gate',
           message: `HTML too small (${html.length}B), likely stuck at verification/gate page`,
-          suggestion: 'Proxy/IP bị chặn hoàn toàn. Đổi proxy residential sạch, giảm concurrency = 1, thử lại sau vài phút.'
+          suggestion: 'IP bị chặn hoàn toàn. Dùng VPN extension với IP sạch, giảm concurrency = 1, thử lại sau vài phút.'
         });
         try { upsertHistoryItem({ url, shopName: 'Gate/Verify', shopSold: 'N/A', productName: 'Cannot access', productSold: 'N/A', note }); } catch {}
         return;
@@ -2612,8 +2368,8 @@ app.post('/api/crawl', async (req, res) => {
           shopSold: shopSold || 'N/A (Geo-blocked)',
           productName: productName || 'Unknown',
           productSold: productSold || 'N/A (Geo-blocked)',
-          message: 'Product is region-locked. Use Vietnam TikTok link or correct regional proxy for full data.',
-          suggestion: 'Dùng proxy đúng khu vực sản phẩm, hoặc link vt.tiktok.com nội địa.'
+          message: 'Product is region-locked. Use Vietnam TikTok link or VPN extension for correct region.',
+          suggestion: 'Dùng VPN extension với region đúng, hoặc link vt.tiktok.com nội địa.'
         };
         results.push(item);
         try { upsertHistoryItem({ url, shopName: item.shopName, shopSold: item.shopSold, productName: item.productName, productSold: item.productSold, note, shopId: item.shopId, shopSlug: item.shopSlug }); } catch {}
@@ -2703,14 +2459,14 @@ app.post('/api/crawl', async (req, res) => {
           status: 'no_data',
           reason: 'no_data',
           message: 'Unable to extract data - page may be blocked or CAPTCHA not solved properly',
-          suggestion: 'Thử proxy khác, giảm concurrency, hoặc chạy lại vào thời điểm khác.'
+          suggestion: 'Dùng VPN extension với IP sạch, giảm concurrency, hoặc chạy lại vào thời điểm khác.'
         };
         results.push(item);
       }
       
     } catch (error) {
       console.log('✗ Error crawling', url, ':', error.message);
-      const item = { url, status: 'error', reason: 'error', error: error.message, suggestion: 'Kiểm tra proxy/API, thử lại; nếu qua Cloudflare Tunnel hãy bật chế độ chạy nền / async.' };
+      const item = { url, status: 'error', reason: 'error', error: error.message, suggestion: 'Kiểm tra VPN extension/API key, thử lại; nếu qua Cloudflare Tunnel hãy bật chế độ chạy nền / async.' };
       results.push(item);
     }
   };
@@ -2801,7 +2557,7 @@ app.get('/api/captcha-result', async (req, res) => {
 
 // Crawl Shop Only - Get total shop sold and save to history with growth tracking
 app.post('/api/crawl-shop-only', async (req, res) => {
-  const { url, proxy, apiKey, note } = req.body;
+  const { url, apiKey, note } = req.body;
   
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
@@ -2822,7 +2578,6 @@ app.post('/api/crawl-shop-only', async (req, res) => {
     const PORT = process.env.PORT || 8080;
     const crawlResponse = await axios.post(`http://localhost:${PORT}/api/crawl`, {
       links: [url],
-      proxy: proxy || '',
       apiKey: apiKey || '',
       note: note || 'Shop crawl',
       concurrency: 1
@@ -2907,7 +2662,7 @@ app.post('/api/open-shared-browser', async (req, res) => {
     console.log('🌐 Opening shared browser for TikTok (login + crawl)...');
     
     // Launch browser with persistent context and headful mode
-    const launchOptions = createLaunchOptions(null, true);
+    const launchOptions = createLaunchOptions(true);
     launchOptions.headless = false; // Show browser window - người dùng có thể xem
     launchOptions.defaultViewport = null; // Use full viewport
     

@@ -725,7 +725,6 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             url: shop.url,
-            proxy: proxy || undefined,
             apiKey: apiKey || undefined
           }),
           credentials: 'include'
