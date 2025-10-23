@@ -1837,57 +1837,82 @@ app.post('/api/crawl', async (req, res) => {
         console.log('Waiting for page to fully load...');
         await randomDelay(1000, 2000);
         
-        // ✅ STEP 3: PHÁT HIỆN CAPTCHA → DỪNG LẠI
+        // ✅ STEP 3: PHÁT HIỆN CAPTCHA
         console.log('🔍 STEP 3: Phát hiện CAPTCHA...');
         const detectedType = await detectCaptchaType(page);
         
         if (detectedType !== 'NONE') {
-          console.log(`⏸️  DỪNG LẠI - CAPTCHA phát hiện: ${detectedType}`);
+          console.log(`⏸️  CAPTCHA phát hiện: ${detectedType}`);
           
-          if (!apiKey) {
-            console.log('❌ Không có API key - không thể giải CAPTCHA');
-            results.push({
-              url,
-              status: 'captcha_detected',
-              reason: 'captcha',
-              message: 'CAPTCHA detected but no API key provided. Please add hmcaptcha API key.',
-              suggestion: 'Thêm API Key hmcaptcha.com hoặc giảm tốc độ/concurrency để giảm CAPTCHA.'
-            });
-            // Close browser only if it's not the shared browser
-            if (browser !== sharedBrowser) {
-              await browser.close();
-            } else {
-              await page.close(); // Close only the tab
+          // Nếu đang dùng shared browser (có extension), ưu tiên để extension tự giải
+          if (browser === sharedBrowser) {
+            console.log('🤖 Shared browser detected - Chờ extension CAPTCHA solver tự động giải...');
+            console.log('⏳ Waiting up to 60 seconds for extension to solve CAPTCHA...');
+            
+            // Đợi lâu hơn cho extension giải xong
+            await randomDelay(10000, 15000);
+            
+            // Kiểm tra xem CAPTCHA đã biến mất chưa
+            const captchaStillPresent = await detectCaptchaType(page);
+            if (captchaStillPresent !== 'NONE') {
+              console.log('⚠️  Extension chưa giải xong, chờ thêm...');
+              await randomDelay(15000, 20000);
             }
-            return;
-          }
-          
-          // ✅ STEP 4: GIẢI CAPTCHA
-          console.log('🤖 STEP 4: Bắt đầu giải CAPTCHA với hmcaptcha...');
-          const captchaSolved = await solveCaptchaIfNeeded(page, apiKey);
-          
-          if (!captchaSolved.success) {
-            console.log('❌ CAPTCHA KHÔNG GIẢI ĐƯỢC! Lỗi:', captchaSolved.error);
-            results.push({
-              url,
-              status: 'captcha_failed',
-              reason: 'captcha',
-              message: 'CAPTCHA detected, solver failed: ' + (captchaSolved.error || 'Unknown error'),
-              suggestion: 'Cài extension CAPTCHA solver trong shared browser, giảm concurrency, hoặc kiểm tra API key.'
-            });
-            // Close browser only if it's not the shared browser
-            if (browser !== sharedBrowser) {
-              await browser.close();
-            } else {
-              await page.close(); // Close only the tab
+            
+            console.log('✅ Extension should have solved CAPTCHA - continuing...');
+          } else {
+            // Không có extension, dùng API key
+            if (!apiKey) {
+              console.log('❌ Không có API key - không thể giải CAPTCHA');
+              results.push({
+                url,
+                status: 'captcha_detected',
+                reason: 'captcha',
+                message: 'CAPTCHA detected but no API key provided. Please add hmcaptcha API key.',
+                suggestion: 'Thêm API Key hmcaptcha.com hoặc giảm tốc độ/concurrency để giảm CAPTCHA.'
+              });
+              if (browser !== sharedBrowser) {
+                await browser.close();
+              } else {
+                await page.close();
+              }
+              return;
             }
-            return;
+            
+            // ✅ STEP 4: GIẢI CAPTCHA với API
+            console.log('🤖 STEP 4: Bắt đầu giải CAPTCHA với hmcaptcha API...');
+            const captchaSolved = await solveCaptchaIfNeeded(page, apiKey);
+            
+            if (!captchaSolved.success) {
+              console.log('❌ CAPTCHA KHÔNG GIẢI ĐƯỢC! Lỗi:', captchaSolved.error);
+              results.push({
+                url,
+                status: 'captcha_failed',
+                reason: 'captcha',
+                message: 'CAPTCHA detected, solver failed: ' + (captchaSolved.error || 'Unknown error'),
+                suggestion: 'Cài extension CAPTCHA solver trong shared browser, giảm concurrency, hoặc kiểm tra API key.'
+              });
+              if (browser !== sharedBrowser) {
+                await browser.close();
+              } else {
+                await page.close();
+              }
+              return;
+            }
+            
+            console.log('✅ CAPTCHA ĐÃ GIẢI XONG! Chờ page reload và data load...');
+            await randomDelay(5000, 8000);
+            
+            // Chờ thêm cho API requests hoàn thành
+            console.log('⏳ Waiting for product data to load...');
+            await page.waitForTimeout(3000);
           }
-          
-          console.log('✅ CAPTCHA ĐÃ GIẢI XONG! Chờ page reload...');
-          await randomDelay(3000, 5000);
-          
-          // Kiểm tra xem có thực sự vượt qua gate không
+        } else {
+          console.log('✅ No CAPTCHA detected - proceeding...');
+        }
+        
+        // Kiểm tra xem có thực sự vượt qua gate không (nếu có CAPTCHA được giải)
+        if (detectedType !== 'NONE') {
           console.log('🔍 Xác nhận đã vượt qua CAPTCHA...');
           const stillGated = await page.evaluate(() => {
             const html = document.documentElement.outerHTML;
@@ -1898,32 +1923,27 @@ app.post('/api/crawl', async (req, res) => {
           });
           
           if (stillGated.isSmallHtml || stillGated.hasGateKeywords) {
-            console.log(`❌ Vẫn bị chặn sau khi giải CAPTCHA! HTML size: ${stillGated.htmlSize}`);
+            console.log(`❌ Vẫn bị chặn! HTML size: ${stillGated.htmlSize}`);
             results.push({
               url,
               status: 'gate_stuck',
               reason: 'gate',
-              message: `Still stuck at verification page after CAPTCHA solve. HTML size: ${stillGated.htmlSize}`,
+              message: `Still stuck at verification page. HTML size: ${stillGated.htmlSize}`,
               suggestion: 'Dùng VPN extension trong shared browser, giảm concurrency xuống 1, hoặc thử region khác.'
             });
-            // Close browser only if it's not the shared browser
             if (browser !== sharedBrowser) {
               await browser.close();
             } else {
-              await page.close(); // Close only the tab
+              await page.close();
             }
             return;
           }
           console.log('✅ Đã vượt qua CAPTCHA thành công! HTML size:', stillGated.htmlSize);
-        } else {
-          console.log('✅ Không phát hiện CAPTCHA - tiếp tục crawl');
         }
         
-        // ✅ STEP 5: TIẾP TỤC CRAWL DỮ LIỆU (sau khi vượt qua CAPTCHA)
-        
-        // SAU KHI GIẢI CAPTCHA (hoặc không có captcha) → TIẾP TỤC CRAWL
-  console.log('Waiting for API requests...');
-  await randomDelay(1500, 3000); // shorten to reduce total time
+        // ✅ STEP 5: TIẾP TỤC CRAWL DỮ LIỆU
+        console.log('Waiting for API requests...');
+        await randomDelay(1500, 3000);
         
         // Thử click/interact để trigger API nếu cần
         try {
@@ -1937,22 +1957,23 @@ app.post('/api/crawl', async (req, res) => {
           console.log('Interaction warning:', e.message);
         }
         
-        // Chờ selector xuất hiện (tối đa 15s)
+        // Chờ selector xuất hiện (tối đa 45s để extension có thời gian giải CAPTCHA)
         let foundSelectors = false;
         try {
-          // Use fallback selectors with short timeouts
+          console.log('⏳ Waiting for page elements (timeout: 45s for CAPTCHA extension)...');
+          // Use fallback selectors with long timeout for extension to solve CAPTCHA
           const titleEl = await waitForAnySelector(page, [
             '[data-e2e="product-title"]',
             'h1[role="heading"]',
             'h1[class*="title"]',
             'span[class*="Semibold"]',
             'h1'
-          ], 8000);
+          ], 45000); // Tăng lên 45s cho extension CAPTCHA
           if (!titleEl) throw new Error('title selector not found');
           console.log('✓ Found selectors on page');
           foundSelectors = true;
         } catch (e) {
-          console.log('⚠ Timeout waiting for selectors:', e.message);
+          console.log('⚠ Timeout waiting for selectors after 45s:', e.message);
           
           // Nếu không tìm thấy selector, kiểm tra xem có phải đang ở gate/verify không
           const gateCheck = await page.evaluate(() => {
