@@ -8,15 +8,21 @@
     "productName": "Faith Flag Hoodie – Patriotic Christian Cross Design Featuring American Flag and Bold Faith Quote, Perfect for Faithful Patriots, Church Goers and Country Lifestyle Fans, Unisex Hoodie",
     "shopSold": "500",
     "productSold": "18",
-    "note": "",
+    "note": "Shop crawl",
     "createdAt": "2025-10-22T08:51:09.400Z",
-    "updatedAt": "2025-10-22T08:51:09.400Z",
+    "updatedAt": "2025-10-23T03:17:57.715Z",
     "snapshots": [
       {
         "date": "2025-10-22",
         "shopSold": "500",
         "productSold": "18",
         "createdAt": "2025-10-22T08:51:09.400Z"
+      },
+      {
+        "date": "2025-10-23",
+        "shopSold": "500",
+        "productSold": "18",
+        "createdAt": "2025-10-23T03:17:57.715Z"
       }
     ]
   },
@@ -111,17 +117,23 @@
     "shopSlug": null,
     "shopName": "BlushHeart Us Store",
     "productName": "Vintage YHWH Sweatshirt, Christian Crewneck, Yahweh God, Bible Verse, Church staff, Religious apparel, Worship shirt, Top Pullover- Cotton",
-    "shopSold": "16800",
+    "shopSold": "16900",
     "productSold": "28",
-    "note": "",
+    "note": "Shop crawl",
     "createdAt": "2025-10-22T13:53:22.764Z",
-    "updatedAt": "2025-10-22T13:53:22.764Z",
+    "updatedAt": "2025-10-23T03:16:58.441Z",
     "snapshots": [
       {
         "date": "2025-10-22",
         "shopSold": "16800",
         "productSold": "28",
         "createdAt": "2025-10-22T13:53:22.764Z"
+      },
+      {
+        "date": "2025-10-23",
+        "shopSold": "16900",
+        "productSold": "28",
+        "createdAt": "2025-10-23T03:16:58.441Z"
       }
     ]
   }

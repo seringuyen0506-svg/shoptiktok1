@@ -287,7 +287,7 @@ function normalizeUrl(url) {
   }
 }
 
-function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note, shopId, shopSlug }) {
+function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, note, shopId, shopSlug, shopGrowth }) {
   const list = readHistory();
   const nurl = normalizeUrl(url);
   const now = new Date();
@@ -306,6 +306,7 @@ function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, 
       shopSold: shopSold || '',
       productSold: productSold || '',
       note: note || '',
+      shopGrowth: shopGrowth || null,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
       snapshots: []
@@ -319,6 +320,7 @@ function upsertHistoryItem({ url, shopName, shopSold, productName, productSold, 
     item.shopSold = shopSold ?? item.shopSold;
     item.productSold = productSold ?? item.productSold;
     if (typeof note === 'string') item.note = note;
+    if (shopGrowth) item.shopGrowth = shopGrowth;
     item.updatedAt = now.toISOString();
   }
   // upsert snapshot for today
@@ -2754,6 +2756,17 @@ app.post('/api/crawl-shop-only', async (req, res) => {
         percent: parseFloat(percent)
       };
       console.log(`📊 [Shop Only] Growth: ${diff > 0 ? '+' : ''}${diff} (${percent}%)`);
+      
+      // Update history item with growth data
+      const historyItems = readHistory();
+      const historyItem = historyItems.find(it => it.url === nurl);
+      if (historyItem) {
+        historyItem.shopGrowth = growth;
+        historyItem.note = (historyItem.note || '') + ` | Growth: ${diff > 0 ? '+' : ''}${diff} (${percent}%)`;
+        historyItem.updatedAt = new Date().toISOString();
+        writeHistory(historyItems);
+        console.log(`💾 [Shop Only] Saved growth data to history`);
+      }
     }
     
     res.json({

@@ -2210,7 +2210,7 @@ function App() {
               ]),
               !collapsedGroups[g.key] && React.createElement('div', { key: 'list', style: { overflowX: 'auto' } },
                 React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0 } }, [
-                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, ['Chọn','Link','Sản phẩm','Đã bán (Shop)','Đã bán (SP)','Thời gian','Note','Hành động'].map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: 'var(--color-gray-100)', color: 'var(--color-gray-700)', padding: 12, textAlign: 'left', fontSize: 13, fontWeight: '600', borderBottom: '1px solid var(--color-gray-200)' } }, h)))),
+                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, ['Chọn','Link','Sản phẩm','Đã bán (Shop)','Đã bán (SP)','Tăng trưởng','Thời gian','Note','Hành động'].map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: 'var(--color-gray-100)', color: 'var(--color-gray-700)', padding: 12, textAlign: 'left', fontSize: 13, fontWeight: '600', borderBottom: '1px solid var(--color-gray-200)' } }, h)))),
                   React.createElement('tbody', { key: 'tb' }, g.items.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { borderBottom: '1px solid #f3f4f6' } }, [
                     React.createElement('td', { style: { padding: 12, textAlign: 'center' } },
                       React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
@@ -2225,6 +2225,21 @@ function App() {
                     React.createElement('td', { style: { padding: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.productName || '—'),
                     React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, it.shopSold || '—'),
                     React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, it.productSold || '—'),
+                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, 
+                      it.shopGrowth 
+                        ? React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' } }, [
+                            React.createElement('span', { key: 'icon', style: { fontSize: 16 } }, it.shopGrowth.diff >= 0 ? '📈' : '📉'),
+                            React.createElement('span', { 
+                              key: 'val', 
+                              style: { fontSize: 12, fontWeight: 600, color: it.shopGrowth.diff >= 0 ? '#10b981' : '#ef4444' } 
+                            }, `${it.shopGrowth.diff >= 0 ? '+' : ''}${it.shopGrowth.diff}`),
+                            React.createElement('span', { 
+                              key: 'pct', 
+                              style: { fontSize: 11, color: '#6b7280' } 
+                            }, `(${it.shopGrowth.percent >= 0 ? '+' : ''}${it.shopGrowth.percent}%)`)
+                          ])
+                        : '—'
+                    ),
                     React.createElement('td', { style: { padding: 12, fontSize: 13, color: 'var(--color-gray-600)', whiteSpace: 'nowrap' }, title: it.createdAt }, formatTime(it.createdAt)),
                     React.createElement('td', { style: { padding: 12 } }, (
                       editingId === it.id
