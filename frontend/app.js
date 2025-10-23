@@ -1433,7 +1433,7 @@ function App() {
             fontWeight: '600',
             color: '#333'
           }
-        }, '🔐 TikTok Login'),
+        }, '🌐 Shared Browser (Login + Crawl)'),
         React.createElement('div', {
           key: 'login-desc',
           style: {
@@ -1442,9 +1442,16 @@ function App() {
             background: '#e3f2fd',
             borderRadius: '8px',
             fontSize: '14px',
-            color: '#1565c0'
+            color: '#1565c0',
+            lineHeight: '1.6'
           }
-        }, '💡 Login vào TikTok để tránh bị chặn khi crawl. Browser sẽ lưu cookies tự động.'),
+        }, [
+          React.createElement('div', { key: 'd1', style: { fontWeight: 'bold', marginBottom: '8px' } }, '💡 Cách sử dụng:'),
+          React.createElement('div', { key: 'd2' }, '1️⃣ Click "Mở Browser" → Browser sẽ mở (có UI)'),
+          React.createElement('div', { key: 'd3' }, '2️⃣ Login TikTok + cài extensions (nếu cần)'),
+          React.createElement('div', { key: 'd4' }, '3️⃣ Giữ browser mở → Tất cả crawl sẽ dùng browser này'),
+          React.createElement('div', { key: 'd5', style: { marginTop: '8px', fontWeight: 'bold', color: '#d32f2f' } }, '⚠️ Bạn sẽ THẤY browser hoạt động real-time khi crawl!')
+        ]),
         React.createElement('div', {
           key: 'login-buttons',
           style: { display: 'flex', gap: '12px', flexWrap: 'wrap' }
@@ -1452,13 +1459,13 @@ function App() {
           React.createElement(Button, {
             onClick: async () => {
               try {
-                const res = await fetch('/api/open-browser-for-login', {
+                const res = await fetch('/api/open-shared-browser', {
                   method: 'POST',
                   credentials: 'include'
                 });
                 const data = await res.json();
                 if (data.success) {
-                  alert('✅ Browser đã mở! Vui lòng login vào TikTok.\n\n⏰ Browser sẽ tự động đóng sau 5 phút hoặc bạn có thể đóng thủ công.');
+                  alert('✅ Browser đã mở!\n\n💡 Giờ bạn có thể:\n• Login TikTok\n• Cài Chrome extensions\n• Giữ browser mở\n\n🎯 Browser này sẽ dùng cho TẤT CẢ các lần crawl!');
                 } else {
                   alert('❌ Lỗi: ' + (data.error || 'Không thể mở browser'));
                 }
@@ -1467,11 +1474,11 @@ function App() {
               }
             },
             variant: 'primary'
-          }, '🌐 Mở Browser để Login'),
+          }, '🌐 Mở Browser'),
           React.createElement(Button, {
             onClick: async () => {
               try {
-                const res = await fetch('/api/close-login-browser', {
+                const res = await fetch('/api/close-shared-browser', {
                   method: 'POST',
                   credentials: 'include'
                 });

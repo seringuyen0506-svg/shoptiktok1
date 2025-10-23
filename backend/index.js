@@ -1872,22 +1872,31 @@ app.post('/api/crawl', async (req, res) => {
           console.log('  → Resolved short URL to:', targetUrl);
         }
         
-        // Use createLaunchOptions with persistent session (will reuse TikTok login cookies)
-        const launchOptions = createLaunchOptions(proxy, true); // true = use persistent userDataDir
-        
-        // Add additional args for locale/lang
-        launchOptions.args.push(
-          '--disable-features=IsolateOrigins,site-per-process',
-          '--disable-web-security',
-          '--disable-features=VizDisplayCompositor',
-          '--ignore-certificate-errors-spki-list',
-          '--disable-software-rasterizer',
-          '--disable-extensions',
-          `--lang=${langPref}`
-        );
-        
-        browser = await puppeteer.launch(launchOptions);
-        const page = await browser.newPage();
+        // Use shared browser if available, otherwise launch new one
+        let page;
+        if (sharedBrowser) {
+          console.log('✓ Using shared browser (with login + extensions)');
+          browser = sharedBrowser;
+          page = await browser.newPage();
+        } else {
+          console.log('⚠️  No shared browser - launching new headless browser');
+          // Use createLaunchOptions with persistent session (will reuse TikTok login cookies)
+          const launchOptions = createLaunchOptions(proxy, true); // true = use persistent userDataDir
+          
+          // Add additional args for locale/lang
+          launchOptions.args.push(
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-web-security',
+            '--disable-features=VizDisplayCompositor',
+            '--ignore-certificate-errors-spki-list',
+            '--disable-software-rasterizer',
+            '--disable-extensions',
+            `--lang=${langPref}`
+          );
+          
+          browser = await puppeteer.launch(launchOptions);
+          page = await browser.newPage();
+        }
         // Emulate timezone + grant geo permission + set geolocation
         try {
           const context = browser.defaultBrowserContext();
@@ -2109,7 +2118,12 @@ app.post('/api/crawl', async (req, res) => {
               message: 'CAPTCHA detected but no API key provided. Please add hmcaptcha API key.',
               suggestion: 'Thêm API Key hmcaptcha.com hoặc giảm tốc độ/concurrency để giảm CAPTCHA.'
             });
-            await browser.close();
+            // Close browser only if it's not the shared browser
+            if (browser !== sharedBrowser) {
+              await browser.close();
+            } else {
+              await page.close(); // Close only the tab
+            }
             return;
           }
           
@@ -2126,7 +2140,12 @@ app.post('/api/crawl', async (req, res) => {
               message: 'CAPTCHA detected, solver failed: ' + (captchaSolved.error || 'Unknown error'),
               suggestion: 'Thử lại với proxy khác, giảm concurrency, hoặc kiểm tra API key.'
             });
-            await browser.close();
+            // Close browser only if it's not the shared browser
+            if (browser !== sharedBrowser) {
+              await browser.close();
+            } else {
+              await page.close(); // Close only the tab
+            }
             return;
           }
           
@@ -2152,7 +2171,12 @@ app.post('/api/crawl', async (req, res) => {
               message: `Still stuck at verification page after CAPTCHA solve. HTML size: ${stillGated.htmlSize}`,
               suggestion: 'Proxy bị chặn hoặc fingerprint kém. Thử proxy residential sạch hơn, giảm concurrency xuống 1, hoặc đổi IP/region.'
             });
-            await browser.close();
+            // Close browser only if it's not the shared browser
+            if (browser !== sharedBrowser) {
+              await browser.close();
+            } else {
+              await page.close(); // Close only the tab
+            }
             return;
           }
           console.log('✅ Đã vượt qua CAPTCHA thành công! HTML size:', stillGated.htmlSize);
@@ -2226,7 +2250,11 @@ app.post('/api/crawl', async (req, res) => {
                     message: 'CAPTCHA detected late (after selector timeout) and solver failed: ' + (solved.error || 'Unknown'),
                     suggestion: 'Đổi proxy residential sạch, giảm concurrency, kiểm tra API key và thử lại.'
                   });
-                  await browser.close();
+                  if (browser !== sharedBrowser) {
+                    await browser.close();
+                  } else {
+                    await page.close();
+                  }
                   return;
                 }
               } else {
@@ -2238,7 +2266,11 @@ app.post('/api/crawl', async (req, res) => {
                   message: `Page stuck at gate/verify. HTML size: ${gateCheck.htmlSize}B`,
                   suggestion: 'IP/proxy bị TikTok chặn. Đổi proxy residential, giảm concurrency xuống 1, hoặc thử region khác.'
                 });
-                await browser.close();
+                if (browser !== sharedBrowser) {
+                  await browser.close();
+                } else {
+                  await page.close();
+                }
                 return;
               }
             } else {
@@ -2713,6 +2745,16 @@ app.post('/api/crawl', async (req, res) => {
   const successCount = results.filter(r => !r.error && r.status !== 'error').length;
   console.log(`🎉 COMPLETED: ${successCount}/${links.length} successful | Total time: ${totalTime}s`);
   
+  // Close browser if it's not the shared browser
+  if (browser && browser !== sharedBrowser) {
+    try {
+      await browser.close();
+      console.log('✓ Browser closed');
+    } catch (e) {
+      console.log('Browser already closed');
+    }
+  }
+  
   res.json({ results });
 });
 
@@ -2847,62 +2889,48 @@ app.post('/api/crawl-shop-only', async (req, res) => {
   }
 });
 
-// Open browser for manual TikTok login
-let loginBrowser = null;
-let loginBrowserTimeout = null;
+// Shared browser instance for login + crawl (persistent, headful)
+let sharedBrowser = null;
 
-app.post('/api/open-browser-for-login', async (req, res) => {
+app.post('/api/open-shared-browser', async (req, res) => {
   try {
-    // Close existing login browser if any
-    if (loginBrowser) {
+    // Close existing browser if any
+    if (sharedBrowser) {
       try {
-        await loginBrowser.close();
+        await sharedBrowser.close();
       } catch (e) {
         console.log('Previous browser already closed');
       }
-      loginBrowser = null;
+      sharedBrowser = null;
     }
 
-    if (loginBrowserTimeout) {
-      clearTimeout(loginBrowserTimeout);
-      loginBrowserTimeout = null;
-    }
-
-    console.log('🌐 Opening browser for TikTok login...');
+    console.log('🌐 Opening shared browser for TikTok (login + crawl)...');
     
     // Launch browser with persistent context and headful mode
     const launchOptions = createLaunchOptions(null, true);
-    launchOptions.headless = false; // Show browser window
+    launchOptions.headless = false; // Show browser window - người dùng có thể xem
     launchOptions.defaultViewport = null; // Use full viewport
     
-    loginBrowser = await puppeteer.launch(launchOptions);
-    const pages = await loginBrowser.pages();
-    const page = pages[0] || await loginBrowser.newPage();
+    sharedBrowser = await puppeteer.launch(launchOptions);
+    const pages = await sharedBrowser.pages();
+    const page = pages[0] || await sharedBrowser.newPage();
     
-    // Navigate to TikTok login page
-    await page.goto('https://www.tiktok.com/login', {
+    // Navigate to TikTok homepage
+    await page.goto('https://www.tiktok.com', {
       waitUntil: 'networkidle2',
       timeout: 30000
     });
     
-    console.log('✅ Browser opened! Please login to TikTok manually.');
-    console.log('⏰ Browser will close automatically after 5 minutes.');
-    
-    // Auto-close after 5 minutes
-    loginBrowserTimeout = setTimeout(async () => {
-      if (loginBrowser) {
-        console.log('⏰ Closing login browser after timeout...');
-        try {
-          await loginBrowser.close();
-        } catch (e) {}
-        loginBrowser = null;
-      }
-    }, 300000); // 5 minutes
+    console.log('✅ Shared browser opened!');
+    console.log('💡 You can:');
+    console.log('   1. Login to TikTok');
+    console.log('   2. Install Chrome extensions');
+    console.log('   3. Keep this browser open to use for all crawl operations');
+    console.log('⚠️  Do NOT close this window manually - use "Đóng Browser" button');
     
     res.json({
       success: true,
-      message: 'Browser opened for login. Please complete login manually. Browser will close after 5 minutes or you can close it manually.',
-      timeout: 300000
+      message: 'Shared browser opened! You can login and install extensions. This browser will be used for all crawl operations.'
     });
   } catch (error) {
     console.error('❌ Error opening browser:', error.message);
@@ -2912,18 +2940,13 @@ app.post('/api/open-browser-for-login', async (req, res) => {
   }
 });
 
-app.post('/api/close-login-browser', async (req, res) => {
+app.post('/api/close-shared-browser', async (req, res) => {
   try {
-    if (loginBrowser) {
-      await loginBrowser.close();
-      loginBrowser = null;
+    if (sharedBrowser) {
+      await sharedBrowser.close();
+      sharedBrowser = null;
       
-      if (loginBrowserTimeout) {
-        clearTimeout(loginBrowserTimeout);
-        loginBrowserTimeout = null;
-      }
-      
-      console.log('✅ Login browser closed manually');
+      console.log('✅ Shared browser closed');
       res.json({ success: true, message: 'Browser closed' });
     } else {
       res.json({ success: false, message: 'No browser is open' });
@@ -2934,10 +2957,10 @@ app.post('/api/close-login-browser', async (req, res) => {
   }
 });
 
-app.get('/api/login-browser-status', (req, res) => {
+app.get('/api/shared-browser-status', (req, res) => {
   res.json({
-    isOpen: loginBrowser !== null,
-    message: loginBrowser ? 'Browser is open for login' : 'No browser is open'
+    isOpen: sharedBrowser !== null,
+    message: sharedBrowser ? 'Shared browser is open and ready for crawling' : 'No browser is open'
   });
 });
 
