@@ -1348,8 +1348,8 @@ function App() {
 
     // Crawler Tab Content
     activeTab === 'crawler' && React.createElement(React.Fragment, null, [
-    // Proxy Section
-    React.createElement(GlassCard, { 
+    // Proxy Section - HIDDEN (use VPN extension in shared browser instead)
+    /* React.createElement(GlassCard, { 
       key: 'proxy-card',
       children: [
         React.createElement('h3', { 
@@ -1419,9 +1419,9 @@ function App() {
               )
         )
       ]
-    }),
+    }), */
 
-    // TikTok Login Section
+    // Shared Browser Section (replaces Proxy + API Key - use extensions instead)
     React.createElement(GlassCard, {
       key: 'tiktok-login',
       children: [
@@ -1494,8 +1494,8 @@ function App() {
       ]
     }),
 
-    // API Key Section
-    React.createElement(GlassCard, {
+    // API Key Section - HIDDEN (use CAPTCHA solver extension in shared browser instead)
+    /* React.createElement(GlassCard, {
       children: [
         React.createElement('h3', { 
           key: 'api-title',
@@ -1545,7 +1545,7 @@ function App() {
             : React.createElement('div', { style: { color: '#0d7a6f' } }, '✅ API Key hợp lệ!')
         )
       ]
-    }),
+    }), */
 
     // Links Input Section
     React.createElement(GlassCard, {
