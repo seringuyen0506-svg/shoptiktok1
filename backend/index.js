@@ -67,26 +67,60 @@ const randomDelay = (min, max) => new Promise(resolve => setTimeout(resolve, Mat
 function resolveChromiumExecutablePath() {
   try {
     const envPath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    if (envPath && fs.existsSync(envPath)) return envPath;
+    if (envPath && fs.existsSync(envPath)) {
+      console.log('✓ Using Chrome from env:', envPath);
+      return envPath;
+    }
   } catch {}
+
+  // Windows Chrome paths (official Chrome, not Chromium testing)
+  if (process.platform === 'win32') {
+    const windowsPaths = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
+      process.env.PROGRAMFILES + '\\Google\\Chrome\\Application\\chrome.exe',
+      process.env['PROGRAMFILES(X86)'] + '\\Google\\Chrome\\Application\\chrome.exe'
+    ];
+    
+    for (const chromePath of windowsPaths) {
+      try {
+        if (chromePath && fs.existsSync(chromePath)) {
+          console.log('✓ Found official Chrome at:', chromePath);
+          return chromePath;
+        }
+      } catch {}
+    }
+  }
 
   try {
     // puppeteer >= v19 exposes executablePath()
     const p = typeof vanillaPuppeteer.executablePath === 'function' ? vanillaPuppeteer.executablePath() : null;
-    if (p && fs.existsSync(p)) return p;
+    if (p && fs.existsSync(p)) {
+      console.log('⚠️  Using Puppeteer bundled Chromium:', p);
+      return p;
+    }
   } catch {}
 
+  // Linux Chrome paths
   const candidates = [
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
     '/usr/bin/chrome',
     '/opt/google/chrome/chrome'
   ];
   for (const c of candidates) {
-    try { if (fs.existsSync(c)) return c; } catch {}
+    try { 
+      if (fs.existsSync(c)) {
+        console.log('✓ Found Chrome at:', c);
+        return c;
+      }
+    } catch {}
   }
+  
+  console.log('⚠️  No Chrome found, using Puppeteer default');
   return null;
 }
 
