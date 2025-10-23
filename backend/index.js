@@ -1942,11 +1942,12 @@ app.post('/api/crawl', async (req, res) => {
           
           // Nếu đang dùng shared browser (có extension), ưu tiên để extension tự giải
           if (browser === sharedBrowser) {
-            console.log('🤖 Shared browser detected - Chờ extension CAPTCHA solver tự động giải...');
-            console.log('⏳ Waiting up to 90 seconds for extension to solve CAPTCHA...');
+            console.log('🤖 Shared browser detected - Chờ CAPTCHA được giải (extension hoặc manual)...');
+            console.log('⏳ Waiting up to 5 minutes for CAPTCHA to be solved...');
+            console.log('💡 TIP: Nếu extension không tự giải, bạn có thể giải tay trong browser window!');
             
             // Poll để kiểm tra HTML size tăng lên (nghĩa là đã vượt qua CAPTCHA)
-            const maxWaitTime = 90000; // 90 giây
+            const maxWaitTime = 300000; // 5 phút (300 giây) - đủ thời gian giải tay
             const pollInterval = 5000; // Check mỗi 5 giây
             const startWait = Date.now();
             let captchaSolved = false;
@@ -1973,12 +1974,13 @@ app.post('/api/crawl', async (req, res) => {
               }
               
               const elapsed = ((Date.now() - startWait) / 1000).toFixed(1);
-              console.log(`  ⏱️  Elapsed: ${elapsed}s / 90s`);
+              console.log(`  ⏱️  Elapsed: ${elapsed}s / 300s (5 minutes)`);
             }
             
             if (!captchaSolved) {
-              console.log('⚠️  Extension không giải được CAPTCHA sau 90s');
-              // Vẫn tiếp tục thử crawl, có thể extension đã giải nhưng ta chưa phát hiện
+              console.log('⚠️  CAPTCHA chưa được giải sau 5 phút');
+              console.log('💡 Check: Extension có bật không? Hoặc bạn đã giải tay đúng chưa?');
+              // Vẫn tiếp tục thử crawl, có thể đã giải nhưng ta chưa phát hiện
             } else {
               // Chờ thêm để data load đầy đủ
               console.log('⏳ Waiting for data to fully load...');
