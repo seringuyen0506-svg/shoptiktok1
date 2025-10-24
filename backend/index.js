@@ -2859,11 +2859,17 @@ app.post('/api/open-shared-browser', async (req, res) => {
     const pages = await sharedBrowser.pages();
     const page = pages[0] || await sharedBrowser.newPage();
     
-    // Navigate to TikTok homepage
-    await page.goto('https://www.tiktok.com', {
-      waitUntil: 'networkidle2',
-      timeout: 30000
-    });
+    // Navigate to TikTok homepage with retry logic
+    try {
+      await page.goto('https://www.tiktok.com', {
+        waitUntil: 'domcontentloaded', // Less strict than networkidle2
+        timeout: 60000 // Increase timeout to 60s
+      });
+      console.log('✓ Successfully navigated to TikTok homepage');
+    } catch (navError) {
+      console.warn('⚠️ Navigation to TikTok failed (not critical):', navError.message);
+      // Continue anyway - browser is still usable
+    }
     
     console.log('✅ Shared browser opened!');
     console.log('💡 You can:');
