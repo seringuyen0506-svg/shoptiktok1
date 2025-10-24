@@ -4,13 +4,13 @@
     "url": "https://vm.tiktok.com/ZTHnhatdtYvUL-0VZ1q/",
     "shopId": null,
     "shopSlug": null,
-    "shopName": "BullockXp819",
-    "productName": "Faith Flag Hoodie – Patriotic Christian Cross Design Featuring American Flag and Bold Faith Quote, Perfect for Faithful Patriots, Church Goers and Country Lifestyle Fans, Unisex Hoodie",
-    "shopSold": "500",
-    "productSold": "18",
-    "note": "Shop crawl | Growth: 0 (0.0%)",
+    "shopName": "Gate/Verify",
+    "productName": "Cannot access",
+    "shopSold": "N/A",
+    "productSold": "N/A",
+    "note": "",
     "createdAt": "2025-10-22T08:51:09.400Z",
-    "updatedAt": "2025-10-23T03:25:56.263Z",
+    "updatedAt": "2025-10-23T13:14:32.791Z",
     "snapshots": [
       {
         "date": "2025-10-22",
@@ -20,10 +20,10 @@
       },
       {
         "date": "2025-10-23",
-        "shopSold": "500",
-        "productSold": "18",
+        "shopSold": null,
+        "productSold": null,
         "createdAt": "2025-10-23T03:17:57.715Z",
-        "updatedAt": "2025-10-23T03:25:56.255Z"
+        "updatedAt": "2025-10-23T13:14:32.791Z"
       }
     ],
     "shopGrowth": {
@@ -252,6 +252,236 @@
         "productSold": null,
         "createdAt": "2025-10-23T04:54:55.465Z",
         "updatedAt": "2025-10-23T05:00:20.082Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761230724289_1snh2e",
+    "url": "https://vm.tiktok.com/ZTHnhactSKtWB-STeVB/",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "N/A (Geo-blocked)",
+    "productName": "N/A (Geo-blocked - Error 23002102)",
+    "shopSold": "N/A (Geo-blocked)",
+    "productSold": "N/A (Geo-blocked)",
+    "note": "",
+    "productGrowth": null,
+    "shopGrowth": null,
+    "createdAt": "2025-10-23T14:45:24.289Z",
+    "updatedAt": "2025-10-23T14:45:24.289Z",
+    "snapshots": [
+      {
+        "date": "2025-10-23",
+        "shopSold": null,
+        "productSold": null,
+        "createdAt": "2025-10-23T14:45:24.289Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761233224452_004qw2",
+    "url": "https://www.tiktok.com/shop/pdp/mens-athletic-t-shirt-by-brand-lightweight-quick-dry-crew-neck-tops/1731706276135866762",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "Gate/Verify",
+    "productName": "Cannot access",
+    "shopSold": "N/A",
+    "productSold": "N/A",
+    "note": "",
+    "productGrowth": null,
+    "shopGrowth": null,
+    "createdAt": "2025-10-23T15:27:04.452Z",
+    "updatedAt": "2025-10-23T15:27:04.452Z",
+    "snapshots": [
+      {
+        "date": "2025-10-23",
+        "shopSold": null,
+        "productSold": null,
+        "createdAt": "2025-10-23T15:27:04.452Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761235913307_6qc04q",
+    "url": "https://www.tiktok.com/shop/pdp/mens-athletic-t-shirt-by-brand-lightweight-quick-dry-crew-neck-tops/1731785732856844685?source=ecommerce_store",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "StyleCraftedStore",
+    "productName": "Fourth Wing Book Pumpkin Sweatshirt, Halloween Fourth Wing Shirt, Dragon Lover Gifts, Book Lover Tee, Iron Flame Onyx Storm Fan Shirt",
+    "shopSold": "8200",
+    "productSold": "125",
+    "note": "",
+    "productGrowth": {
+      "previous": "125",
+      "current": "125",
+      "diff": 0,
+      "percent": 0
+    },
+    "shopGrowth": null,
+    "createdAt": "2025-10-23T16:11:53.307Z",
+    "updatedAt": "2025-10-24T03:52:58.170Z",
+    "snapshots": [
+      {
+        "date": "2025-10-23",
+        "shopSold": "8200",
+        "productSold": "125",
+        "createdAt": "2025-10-23T16:11:53.307Z"
+      },
+      {
+        "date": "2025-10-24",
+        "shopSold": "8200",
+        "productSold": "125",
+        "createdAt": "2025-10-24T03:52:58.170Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761276824055_340qbd",
+    "url": "https://www.tiktok.com/shop/pdp/i-could-be-meaner-tee-by-trend-apparel-funny-unisex-shirt-for-all/1730880636227588948",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "DaisyTees",
+    "productName": "I Could Be Meaner Tee - Spicy Attitude Shirt - Confident and Funny Apparel - Perfect Gift for Nice People - Trend Tee - Trend Gift - Parent SHirt",
+    "shopSold": "10400",
+    "productSold": "96",
+    "note": "",
+    "productGrowth": {
+      "previous": "96",
+      "current": "96",
+      "diff": 0,
+      "percent": 0
+    },
+    "shopGrowth": null,
+    "createdAt": "2025-10-24T03:33:44.055Z",
+    "updatedAt": "2025-10-24T03:54:27.471Z",
+    "snapshots": [
+      {
+        "date": "2025-10-24",
+        "shopSold": "10400",
+        "productSold": "96",
+        "createdAt": "2025-10-24T03:33:44.055Z",
+        "updatedAt": "2025-10-24T03:54:27.471Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761277120652_ufodqv",
+    "url": "https://www.tiktok.com/shop/pdp/mens-athletic-t-shirt-by-brand-lightweight-quick-dry-crew-neck-tops/1730215162432885700?source=ecommerce_store",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "Cowboy Girl Clo",
+    "productName": "Vintage Book Sweatshirt, Reading Sweatshirt, Booklover gift, Bookish Sweatshirt, Librarian Sweatshirt, Bookworm, Reader Gift, Retro Book",
+    "shopSold": "900",
+    "productSold": "72",
+    "note": "",
+    "productGrowth": {
+      "previous": "72",
+      "current": "72",
+      "diff": 0,
+      "percent": 0
+    },
+    "shopGrowth": null,
+    "createdAt": "2025-10-24T03:38:40.652Z",
+    "updatedAt": "2025-10-24T03:50:44.710Z",
+    "snapshots": [
+      {
+        "date": "2025-10-24",
+        "shopSold": "900",
+        "productSold": "72",
+        "createdAt": "2025-10-24T03:38:40.652Z",
+        "updatedAt": "2025-10-24T03:50:44.710Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761277889793_pi3pp1",
+    "url": "https://www.tiktok.com/shop/pdp/mens-athletic-t-shirt-by-brand-lightweight-quick-dry-crew-neck-tops/1729736657066496964",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "Cowboy Girl Clo",
+    "productName": "Bucking Bronco Sweatshirt Western Shirt Western Sweatshirt Western Crewneck Vintage Western Shirt Rodeo Cowboy Shirt Cowgirl",
+    "shopSold": "900",
+    "productSold": "57",
+    "note": "",
+    "productGrowth": null,
+    "shopGrowth": null,
+    "createdAt": "2025-10-24T03:51:29.793Z",
+    "updatedAt": "2025-10-24T03:51:29.793Z",
+    "snapshots": [
+      {
+        "date": "2025-10-24",
+        "shopSold": "900",
+        "productSold": "57",
+        "createdAt": "2025-10-24T03:51:29.793Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761277935093_1siqom",
+    "url": "https://www.tiktok.com/shop/pdp/mens-athletic-t-shirt-by-brand-lightweight-quick-dry-crew-neck-tops/1730332925978907588",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "Cowboy Girl Clo",
+    "productName": "Throne of Glass Sweatshirt, OFFICIALLY LICENSED Sarah J Maas Merch TOG Hoodie Fireheart gift To Whatever End T-shirt The thirteen shirt",
+    "shopSold": "900",
+    "productSold": "61",
+    "note": "",
+    "productGrowth": null,
+    "shopGrowth": null,
+    "createdAt": "2025-10-24T03:52:15.093Z",
+    "updatedAt": "2025-10-24T03:52:15.093Z",
+    "snapshots": [
+      {
+        "date": "2025-10-24",
+        "shopSold": "900",
+        "productSold": "61",
+        "createdAt": "2025-10-24T03:52:15.093Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761278024371_7x9fva",
+    "url": "https://www.tiktok.com/shop/pdp/mens-athletic-t-shirt-by-brand-lightweight-quick-dry-crew-neck-tops/1731814319057834523?source=ecommerce_store",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "Boundless Books7",
+    "productName": "Retro Cozy Season Sjm Books Sweatshirt, Throne Of Glass Series, Acotar Series, Crescent City, Womens Halloween Pumpkin Season T-Shirt, Cute Pumpkin Shirt",
+    "shopSold": "3200",
+    "productSold": "60",
+    "note": "",
+    "productGrowth": null,
+    "shopGrowth": null,
+    "createdAt": "2025-10-24T03:53:44.371Z",
+    "updatedAt": "2025-10-24T03:53:44.371Z",
+    "snapshots": [
+      {
+        "date": "2025-10-24",
+        "shopSold": "3200",
+        "productSold": "60",
+        "createdAt": "2025-10-24T03:53:44.371Z"
+      }
+    ]
+  },
+  {
+    "id": "h_1761281714828_63p161",
+    "url": "https://www.tiktok.com/shop/store/blushheart-us-store/7495955200444697469",
+    "shopId": null,
+    "shopSlug": null,
+    "shopName": "BlushHeart Us Store",
+    "productName": "",
+    "shopSold": "17000",
+    "productSold": "",
+    "note": "Shop crawl",
+    "productGrowth": null,
+    "shopGrowth": null,
+    "createdAt": "2025-10-24T04:55:14.828Z",
+    "updatedAt": "2025-10-24T04:55:14.828Z",
+    "snapshots": [
+      {
+        "date": "2025-10-24",
+        "shopSold": "17000",
+        "productSold": null,
+        "createdAt": "2025-10-24T04:55:14.828Z"
       }
     ]
   }
