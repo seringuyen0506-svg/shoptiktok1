@@ -1642,12 +1642,14 @@ function App() {
             lineHeight: '1.6'
           }
         }, [
-          React.createElement('div', { key: 'd1', style: { fontWeight: 'bold', marginBottom: '8px' } }, '💡 Cách sử dụng:'),
-          React.createElement('div', { key: 'd2' }, '1️⃣ Click "Mở Browser" → Browser sẽ mở (có UI)'),
-          React.createElement('div', { key: 'd3' }, '2️⃣ Login TikTok + cài extensions (nếu cần)'),
-          React.createElement('div', { key: 'd4' }, '3️⃣ Giữ browser mở → Tất cả crawl sẽ dùng browser này'),
-          React.createElement('div', { key: 'd5', style: { marginTop: '8px', fontWeight: 'bold', color: '#d32f2f' } }, '⚠️ Bạn sẽ THẤY browser hoạt động real-time khi crawl!')
+          React.createElement('div', { key: 'd1', style: { fontWeight: 'bold', marginBottom: '8px' } }, '💡 Chỉ dành cho LOCAL:'),
+          React.createElement('div', { key: 'd2' }, '1️⃣ Click "Mở Browser" → Browser Chrome mở trên máy bạn'),
+          React.createElement('div', { key: 'd3' }, '2️⃣ Login TikTok + cài extensions CAPTCHA solver'),
+          React.createElement('div', { key: 'd4' }, '3️⃣ Giữ browser mở → Tất cả crawl dùng browser này'),
+          React.createElement('div', { key: 'd5', style: { marginTop: '8px', fontWeight: 'bold', color: '#d32f2f' } }, '⚠️ Trên production, nút này ẨN đi (browser chạy headless)')
         ]),
+        // Only show browser control buttons on localhost (not production)
+        window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 
         React.createElement('div', {
           key: 'login-buttons',
           style: { display: 'flex', gap: '12px', flexWrap: 'wrap' }
@@ -1686,7 +1688,16 @@ function App() {
             },
             variant: 'secondary'
           }, '❌ Đóng Browser')
-        )
+        ) : React.createElement('div', {
+          key: 'login-info',
+          style: {
+            padding: '12px',
+            backgroundColor: '#fff3cd',
+            borderRadius: '8px',
+            fontSize: '14px',
+            color: '#856404'
+          }
+        }, '💡 Trên production, browser chạy headless để tối ưu hiệu suất. Chỉ cần paste link và crawl!')
       ]
     }),
 
