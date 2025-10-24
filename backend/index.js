@@ -1657,8 +1657,8 @@ app.post('/api/crawl', async (req, res) => {
     } else {
       console.log('🌐 Creating new browser instance for this crawl session...');
       const launchOptions = createLaunchOptions(true); // Use persistent userDataDir
-      // Always headful - xvfb provides virtual display on production
-      launchOptions.headless = false;
+      // Use headless on production, headful on local
+      launchOptions.headless = process.env.NODE_ENV === 'production' ? 'new' : false;
       launchOptions.defaultViewport = null;
       
       // Add additional args for locale/lang
@@ -2849,10 +2849,10 @@ app.post('/api/open-shared-browser', async (req, res) => {
 
     console.log('🌐 Opening shared browser for TikTok (login + crawl)...');
     
-    // Launch browser with persistent context and headful mode
+    // Launch browser with persistent context
     const launchOptions = createLaunchOptions(true);
-    // Always headful - xvfb provides virtual display on production
-    launchOptions.headless = false;
+    // Use headless on production, headful on local
+    launchOptions.headless = process.env.NODE_ENV === 'production' ? 'new' : false;
     launchOptions.defaultViewport = null; // Use full viewport
     
     sharedBrowser = await puppeteer.launch(launchOptions);

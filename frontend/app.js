@@ -1642,14 +1642,12 @@ function App() {
             lineHeight: '1.6'
           }
         }, [
-          React.createElement('div', { key: 'd1', style: { fontWeight: 'bold', marginBottom: '8px' } }, '💡 Chỉ dành cho LOCAL:'),
-          React.createElement('div', { key: 'd2' }, '1️⃣ Click "Mở Browser" → Browser Chrome mở trên máy bạn'),
-          React.createElement('div', { key: 'd3' }, '2️⃣ Login TikTok + cài extensions CAPTCHA solver'),
-          React.createElement('div', { key: 'd4' }, '3️⃣ Giữ browser mở → Tất cả crawl dùng browser này'),
-          React.createElement('div', { key: 'd5', style: { marginTop: '8px', fontWeight: 'bold', color: '#d32f2f' } }, '⚠️ Trên production, nút này ẨN đi (browser chạy headless)')
+          React.createElement('div', { key: 'd1', style: { fontWeight: 'bold', marginBottom: '8px' } }, '💡 Shared Browser:'),
+          React.createElement('div', { key: 'd2' }, '• Localhost: Browser mở trên máy bạn (có UI)'),
+          React.createElement('div', { key: 'd3' }, '• Production: Browser chạy ẩn (headless)'),
+          React.createElement('div', { key: 'd4' }, '• Dùng chung cho TẤT CẢ các lần crawl'),
+          React.createElement('div', { key: 'd5', style: { marginTop: '8px', fontWeight: 'bold', color: '#1976d2' } }, '✨ Có thể login TikTok và cài extensions!')
         ]),
-        // Only show browser control buttons on localhost (not production)
-        window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 
         React.createElement('div', {
           key: 'login-buttons',
           style: { display: 'flex', gap: '12px', flexWrap: 'wrap' }
@@ -1663,7 +1661,7 @@ function App() {
                 });
                 const data = await res.json();
                 if (data.success) {
-                  alert('✅ Browser đã mở!\n\n💡 Giờ bạn có thể:\n• Login TikTok\n• Cài Chrome extensions\n• Giữ browser mở\n\n🎯 Browser này sẽ dùng cho TẤT CẢ các lần crawl!');
+                  alert('✅ Browser đã mở!\n\n💡 Lưu ý:\n• Localhost: Browser hiển thị trên máy\n• Production: Browser chạy ẩn (headless)\n\n🎯 Browser này sẽ dùng cho TẤT CẢ các lần crawl!');
                 } else {
                   alert('❌ Lỗi: ' + (data.error || 'Không thể mở browser'));
                 }
@@ -1688,16 +1686,7 @@ function App() {
             },
             variant: 'secondary'
           }, '❌ Đóng Browser')
-        ) : React.createElement('div', {
-          key: 'login-info',
-          style: {
-            padding: '12px',
-            backgroundColor: '#fff3cd',
-            borderRadius: '8px',
-            fontSize: '14px',
-            color: '#856404'
-          }
-        }, '💡 Trên production, browser chạy headless để tối ưu hiệu suất. Chỉ cần paste link và crawl!')
+        )
       ]
     }),
 
