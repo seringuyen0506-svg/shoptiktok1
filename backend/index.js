@@ -1657,8 +1657,8 @@ app.post('/api/crawl', async (req, res) => {
     } else {
       console.log('🌐 Creating new browser instance for this crawl session...');
       const launchOptions = createLaunchOptions(true); // Use persistent userDataDir
-      // On production (VPS), force headless mode (no X server)
-      launchOptions.headless = process.env.NODE_ENV === 'production' ? 'new' : false;
+      // Always headful - xvfb provides virtual display on production
+      launchOptions.headless = false;
       launchOptions.defaultViewport = null;
       
       // Add additional args for locale/lang
@@ -2851,8 +2851,8 @@ app.post('/api/open-shared-browser', async (req, res) => {
     
     // Launch browser with persistent context and headful mode
     const launchOptions = createLaunchOptions(true);
-    // On production (VPS), force headless mode (no X server)
-    launchOptions.headless = process.env.NODE_ENV === 'production' ? 'new' : false;
+    // Always headful - xvfb provides virtual display on production
+    launchOptions.headless = false;
     launchOptions.defaultViewport = null; // Use full viewport
     
     sharedBrowser = await puppeteer.launch(launchOptions);
