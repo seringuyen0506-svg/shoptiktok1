@@ -48,7 +48,7 @@ app.get('/api/health', (req, res) => {
 // NOTE: We mount at '/api', but Express strips the mount path from req.url (e.g., '/api/check-ip' -> '/check-ip').
 // To keep backend route prefix '/api', we re-add it via pathRewrite below.
 app.use('/api', createProxyMiddleware({
-  target: 'http://localhost:5000',
+  target: 'http://localhost:8080',
   changeOrigin: true,
   ws: true,
   logLevel: 'warn',
@@ -65,7 +65,7 @@ app.use('/api', createProxyMiddleware({
   onProxyReq: (proxyReq, req, res) => {
     // After mount, req.url is '/check-ip'; we log the final target with '/api' re-added
     const finalPath = `/api${req.url}`;
-    console.log(`→ Proxying: ${req.method} ${req.originalUrl} → http://localhost:5000${finalPath}`);
+    console.log(`→ Proxying: ${req.method} ${req.originalUrl} → http://localhost:8080${finalPath}`);
   },
   onProxyRes: (proxyRes, req, res) => {
     console.log(`← Backend response: ${proxyRes.statusCode} ${req.originalUrl}`);
@@ -88,10 +88,10 @@ app.listen(PORT, () => {
   console.log('='.repeat(60));
   console.log(`📡 Server:        http://localhost:${PORT}`);
   console.log(`🏥 Health:        http://localhost:${PORT}/health`);
-  console.log(`🔗 API Proxy:     /api/* → http://localhost:5000/api/*`);
+  console.log(`🔗 API Proxy:     /api/* → http://localhost:8080/api/*`);
   console.log('='.repeat(60));
   console.log('\n✅ READY FOR CLOUDFLARE TUNNEL:');
   console.log(`   cloudflared tunnel --url http://localhost:${PORT}`);
-  console.log('\n⚠️  IMPORTANT: Backend MUST be running on port 5000!');
+  console.log('\n⚠️  IMPORTANT: Backend MUST be running on port 8080!');
   console.log('='.repeat(60) + '\n');
 });

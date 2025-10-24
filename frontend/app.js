@@ -31,8 +31,13 @@ function App() {
   const [collapsedGroups, setCollapsedGroups] = useState({}); // key:boolean collapsed
   const [shopOnlyResults, setShopOnlyResults] = useState({}); // key: groupKey, value: { shopName, shopSold, loading, error }
   
+  // Results table states (for Crawler tab results)
+  const [selectedResultIds, setSelectedResultIds] = useState([]); // checkbox selection in results
+  const [resultNotes, setResultNotes] = useState({}); // { index: 'note text' }
+  const [editingResultIndex, setEditingResultIndex] = useState(null); // which result is being edited
+  
   // Tab navigation state
-  const [activeTab, setActiveTab] = useState('crawler'); // crawler, results, history
+  const [activeTab, setActiveTab] = useState('crawler'); // crawler, results
   
   // Dashboard states
   const [compactView, setCompactView] = useState(false);
@@ -103,6 +108,34 @@ function App() {
       if (raw) setCollapsedGroups(JSON.parse(raw));
     } catch {}
   }, []);
+
+  // Load notes from localStorage when results or history changes
+  useEffect(() => {
+    try {
+      const allNotes = JSON.parse(localStorage.getItem('shopNotes') || '{}');
+      const notesMap = {};
+      
+      // Load notes for results
+      results.forEach((r, i) => {
+        const noteKey = r.url || r.shopSlug || `note_${i}`;
+        if (allNotes[noteKey]) {
+          notesMap[i] = allNotes[noteKey];
+        }
+      });
+      
+      // Load notes for history
+      history.forEach((h, i) => {
+        const noteKey = h.url || h.shopSlug || `note_${i}`;
+        if (allNotes[noteKey]) {
+          notesMap[i] = allNotes[noteKey];
+        }
+      });
+      
+      setResultNotes(notesMap);
+    } catch (e) {
+      console.error('Failed to load notes:', e);
+    }
+  }, [results, history]);
 
   const handleSaveProxy = () => {
     localStorage.setItem('tiktokProxy', proxy);
@@ -495,6 +528,147 @@ function App() {
     }
   };
 
+  // Results table handlers
+  const toggleSelectAllResults = () => {
+    if (selectedResultIds.length === results.length) {
+      setSelectedResultIds([]);
+    } else {
+      setSelectedResultIds(results.map((_, i) => i));
+    }
+  };
+
+  const toggleSelectResult = (index) => {
+    setSelectedResultIds(prev => 
+      prev.includes(index) 
+        ? prev.filter(id => id !== index)
+        : [...prev, index]
+    );
+  };
+
+  const handleSaveResultNote = (index) => {
+    // Save to localStorage using shop URL or index as key
+    const result = results[index] || history[index];
+    if (result) {
+      const noteKey = result.url || result.shopSlug || `note_${index}`;
+      const allNotes = JSON.parse(localStorage.getItem('shopNotes') || '{}');
+      allNotes[noteKey] = resultNotes[index] || '';
+      localStorage.setItem('shopNotes', JSON.stringify(allNotes));
+    }
+    setEditingResultIndex(null);
+    alert('✅ Ghi chú đã được lưu!');
+  };
+
+  const handleRecrawlSelected = async () => {
+    const selectedUrls = selectedResultIds.map(i => results[i]?.url).filter(Boolean);
+    if (selectedUrls.length === 0) {
+      alert('⚠️ Vui lòng chọn ít nhất 1 item để crawl lại!');
+      return;
+    }
+    
+    if (confirm(`Bạn muốn crawl lại ${selectedUrls.length} link đã chọn?`)) {
+      setSelectedResultIds([]); // Clear selection
+      await handleCrawl(selectedUrls);
+    }
+  };
+
+  const handleCrawlShopsOnly = async (shopUrls) => {
+    console.log(`🏪 Crawling ${shopUrls.length} shop link(s)...`);
+    
+    setProgress({
+      current: 0,
+      total: shopUrls.length,
+      currentLink: shopUrls[0] || '',
+      stage: 'starting',
+      message: 'Đang crawl shop...'
+    });
+
+    try {
+      const shopResults = [];
+      
+      for (let i = 0; i < shopUrls.length; i++) {
+        const url = shopUrls[i];
+        setProgress(prev => ({
+          ...prev,
+          current: i + 1,
+          currentLink: url,
+          stage: 'extracting',
+          message: `Đang crawl shop ${i + 1}/${shopUrls.length}...`
+        }));
+
+        try {
+          const res = await fetch('/api/crawl-shop-only', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: url,
+              apiKey: apiKey,
+              note: note || 'Shop crawl'
+            }),
+            credentials: 'include'
+          });
+
+          const data = await res.json();
+
+          if (res.ok && data.success) {
+            shopResults.push({
+              url: url,
+              shopName: data.shopName || 'Unknown',
+              shopSold: data.shopSold || '—',
+              productName: '—',
+              productSold: '—',
+              status: 'success'
+            });
+          } else {
+            shopResults.push({
+              url: url,
+              error: data.error || 'Failed to crawl shop',
+              status: 'error'
+            });
+          }
+        } catch (error) {
+          shopResults.push({
+            url: url,
+            error: error.message,
+            status: 'error'
+          });
+        }
+
+        // Small delay between shops
+        if (i < shopUrls.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      setResults(prev => [...prev, ...shopResults]);
+      setProgress(prev => ({ ...prev, stage: 'done', message: 'Hoàn thành!' }));
+      
+      // Reload history to show updated data
+      await loadHistory();
+      
+      alert(`✅ Đã crawl ${shopResults.filter(r => r.status === 'success').length}/${shopUrls.length} shop thành công!`);
+    } catch (error) {
+      console.error('❌ Error crawling shops:', error);
+      setProgress(prev => ({ ...prev, stage: 'error', message: error.message }));
+      alert(`❌ Lỗi: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedResultIds.length === 0) {
+      alert('⚠️ Vui lòng chọn ít nhất 1 item để xóa!');
+      return;
+    }
+    
+    if (confirm(`Xóa ${selectedResultIds.length} item đã chọn?`)) {
+      const newResults = results.filter((_, i) => !selectedResultIds.includes(i));
+      setResults(newResults);
+      setSelectedResultIds([]);
+      alert('✅ Đã xóa các item đã chọn!');
+    }
+  };
+
   const handleCrawl = async (forcedLinksOrEvent) => {
     setLoading(true);
     setResults([]);
@@ -504,10 +678,44 @@ function App() {
     const linkArray = Array.isArray(forcedLinksOrEvent) && !isEvent
       ? forcedLinksOrEvent
       : links.split('\n').filter(l => l.trim());
+    
+    // Detect shop links vs product links
+    const isShopLink = (url) => {
+      return /tiktok\.com\/shop\/store\//i.test(url);
+    };
+    
+    const shopLinks = linkArray.filter(isShopLink);
+    const productLinks = linkArray.filter(url => !isShopLink(url));
+    
+    // If all links are shop links, use different crawl method
+    if (shopLinks.length > 0 && productLinks.length === 0) {
+      console.log(`🏪 Detected ${shopLinks.length} shop link(s), using shop-only crawl`);
+      await handleCrawlShopsOnly(shopLinks);
+      return;
+    }
+    
+    // If mixed, process separately
+    if (shopLinks.length > 0) {
+      console.log(`⚠️ Mixed links detected: ${shopLinks.length} shop, ${productLinks.length} product`);
+      alert(`⚠️ Phát hiện ${shopLinks.length} link shop và ${productLinks.length} link sản phẩm.\nSẽ crawl riêng từng loại.`);
+      
+      // Crawl shops first
+      await handleCrawlShopsOnly(shopLinks);
+      
+      // Then crawl products
+      if (productLinks.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Small delay
+        // Continue with product crawl below
+      } else {
+        setLoading(false);
+        return;
+      }
+    }
+    
     setProgress({
       current: 0,
-      total: linkArray.length,
-      currentLink: linkArray[0] || '',
+      total: productLinks.length || linkArray.length,
+      currentLink: (productLinks[0] || linkArray[0]) || '',
       stage: 'starting',
       message: 'Đang khởi động...'
     });
@@ -521,10 +729,12 @@ function App() {
         const stages = ['loading', 'checking_captcha', 'extracting'];
         const randomStage = stages[Math.floor(Math.random() * stages.length)];
         
+        const finalLinks = productLinks.length > 0 ? productLinks : linkArray;
+        
         return {
           ...prev,
           current: newCurrent,
-          currentLink: linkArray[newCurrent] || prev.currentLink,
+          currentLink: finalLinks[newCurrent] || prev.currentLink,
           stage: randomStage,
           message: `Đang xử lý link ${newCurrent}/${prev.total}...`
         };
@@ -532,12 +742,14 @@ function App() {
     }, 15000);
 
     try {
+      const finalLinks = productLinks.length > 0 ? productLinks : linkArray;
+      
       if (asyncMode) {
         // Fire-and-poll async job to avoid 524
         const startRes = await fetch('/api/crawl-async', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ links: linkArray, proxy, apiKey, note, concurrency }),
+          body: JSON.stringify({ links: finalLinks, proxy, apiKey, note, concurrency }),
           credentials: 'include'
         });
         if (!startRes.ok) throw new Error(`Start job failed: ${startRes.status}`);
@@ -552,7 +764,7 @@ function App() {
           setProgress(prev => ({
             ...prev,
             current: jd.completed || 0,
-            total: jd.total || linkArray.length,
+            total: jd.total || finalLinks.length,
             stage: jd.status === 'done' ? 'done' : jd.status === 'error' ? 'error' : 'loading',
             message: jd.status === 'error' ? (jd.error || 'Job lỗi') : `Đang xử lý... ${jd.completed}/${jd.total}`
           }));
@@ -616,15 +828,17 @@ function App() {
         
         clearInterval(progressInterval);
         
+        const finalLinks = productLinks.length > 0 ? productLinks : linkArray;
+        
         if (data.results) {
-          setResults(data.results);
+          setResults(prev => [...prev, ...data.results]);
           const successCount = data.results.filter(r => !r.error).length;
           setProgress({
-            current: linkArray.length,
-            total: linkArray.length,
+            current: finalLinks.length,
+            total: finalLinks.length,
             currentLink: '',
             stage: 'done',
-            message: `✅ Hoàn thành! Thành công: ${successCount}/${linkArray.length} links`
+            message: `✅ Hoàn thành! Thành công: ${successCount}/${finalLinks.length} links`
           });
           // reload history after successful crawl
           loadHistory();
@@ -1325,24 +1539,7 @@ function App() {
           color: activeTab === 'results' ? 'white' : '#6b7280',
           boxShadow: activeTab === 'results' ? '0 4px 12px rgba(102, 126, 234, 0.3)' : 'none'
         }
-      }, '📊 Kết quả'),
-      React.createElement('button', {
-        key: 'tab-history',
-        onClick: () => setActiveTab('history'),
-        style: {
-          flex: 1,
-          padding: '14px 24px',
-          borderRadius: 'var(--radius-lg)',
-          border: 'none',
-          fontSize: '15px',
-          fontWeight: '600',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease',
-          background: activeTab === 'history' ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : '#f9fafb',
-          color: activeTab === 'history' ? 'white' : '#6b7280',
-          boxShadow: activeTab === 'history' ? '0 4px 12px rgba(102, 126, 234, 0.3)' : 'none'
-        }
-      }, '📜 Lịch sử')
+      }, '📊 Kết quả')
     ]),
 
     // Crawler Tab Content
@@ -1620,161 +1817,6 @@ function App() {
       ]
     }),
 
-    // Shop Crawl Section
-    React.createElement('div', {
-      key: 'shop-crawl-section',
-      style: {
-        background: 'white',
-        borderRadius: 'var(--radius-xl)',
-        padding: 'var(--space-lg)',
-        marginBottom: 'var(--space-lg)',
-        boxShadow: 'var(--shadow-sm)',
-        border: '1px solid var(--color-gray-200)'
-      }
-    }, [
-      React.createElement('div', {
-        key: 'header',
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-sm)',
-          marginBottom: 'var(--space-md)',
-          paddingBottom: 'var(--space-sm)',
-          borderBottom: '1px solid var(--color-gray-200)'
-        }
-      }, [
-        React.createElement('span', { key: 'icon', style: { fontSize: 24 } }, '🏪'),
-        React.createElement('h3', {
-          key: 'title',
-          style: {
-            fontSize: '16px',
-            fontWeight: '600',
-            color: 'var(--color-gray-900)'
-          }
-        }, 'Crawl tất cả sản phẩm Shop'),
-        React.createElement(Badge, { key: 'new-badge', variant: 'info' }, 'Mới')
-      ]),
-      
-      React.createElement('div', { key: 'content', style: { display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' } }, [
-        // Shop crawl progress bar
-        shopCrawlProgress && React.createElement('div', {
-          key: 'shop-progress-bar',
-          style: {
-            background: shopCrawlProgress.startsWith('❌') ? '#fee2e2' : shopCrawlProgress.startsWith('✅') ? '#dcfce7' : '#dbeafe',
-            border: `1px solid ${shopCrawlProgress.startsWith('❌') ? '#fecaca' : shopCrawlProgress.startsWith('✅') ? '#bbf7d0' : '#bfdbfe'}`,
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-sm)',
-            fontSize: '13px',
-            fontWeight: '500',
-            color: shopCrawlProgress.startsWith('❌') ? '#991b1b' : shopCrawlProgress.startsWith('✅') ? '#166534' : 'var(--color-primary)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-xs)',
-            animation: 'fadeIn 0.3s ease-in'
-          }
-        }, [
-          !shopCrawlProgress.startsWith('✅') && !shopCrawlProgress.startsWith('❌') && React.createElement('div', {
-            key: 'spinner',
-            style: {
-              width: '14px',
-              height: '14px',
-              border: '2px solid var(--color-primary)',
-              borderTopColor: 'transparent',
-              borderRadius: '50%',
-              animation: 'spin 0.6s linear infinite'
-            }
-          }),
-          React.createElement('span', { key: 'text' }, shopCrawlProgress)
-        ]),
-        
-        React.createElement('div', { key: 'shop-url-row' },
-          React.createElement(Input, {
-            value: shopUrl,
-            onChange: e => setShopUrl(e.target.value),
-            placeholder: 'Nhập Shop URL (vd: https://www.tiktok.com/@shopname)',
-            disabled: crawlingShop
-          })
-        ),
-        
-        React.createElement('div', { key: 'amount-api-row', style: { display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 'var(--space-md)' } }, [
-          React.createElement('div', { key: 'amount' },
-            React.createElement('label', {
-              style: {
-                display: 'block',
-                fontSize: '13px',
-                fontWeight: '500',
-                color: 'var(--color-gray-700)',
-                marginBottom: 'var(--space-xs)'
-              }
-            }, 'Số lượng sản phẩm'),
-            React.createElement(Input, {
-              type: 'number',
-              value: shopAmount,
-              onChange: e => setShopAmount(parseInt(e.target.value) || 30),
-              placeholder: '30',
-              disabled: crawlingShop,
-              style: { width: '100%' }
-            })
-          ),
-          React.createElement('div', { key: 'api-key' },
-            React.createElement('label', {
-              style: {
-                display: 'block',
-                fontSize: '13px',
-                fontWeight: '500',
-                color: 'var(--color-gray-700)',
-                marginBottom: 'var(--space-xs)'
-              }
-            }, 'API Key (scrapecreators.com)'),
-            React.createElement('div', { style: { display: 'flex', gap: 'var(--space-sm)' } }, [
-              React.createElement(Input, {
-                key: 'input',
-                value: shopApiKey,
-                onChange: e => setShopApiKey(e.target.value),
-                placeholder: 'Nhập API key...',
-                type: 'password',
-                disabled: crawlingShop,
-                style: { flex: 1 }
-              }),
-              shopApiKey && React.createElement(Button, {
-                key: 'save-btn',
-                onClick: () => {
-                  localStorage.setItem('shopApiKey', shopApiKey);
-                  setShopCrawlProgress('✅ API Key đã được lưu!');
-                  setTimeout(() => setShopCrawlProgress(''), 2000);
-                },
-                variant: 'secondary'
-              }, '💾 Lưu')
-            ])
-          )
-        ]),
-        
-        React.createElement('div', { key: 'info-box', style: { background: 'var(--color-info)/10', padding: 'var(--space-sm)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: 'var(--color-gray-600)' } },
-          '💡 API này sử dụng scrapecreators.com (cost: 1 credit/30 products). Lấy API key tại: ',
-          React.createElement('a', { href: 'https://scrapecreators.com', target: '_blank', style: { color: 'var(--color-primary)', textDecoration: 'underline' } }, 'scrapecreators.com')
-        ),
-        
-        React.createElement('div', { key: 'button-row', style: { display: 'flex', gap: 'var(--space-sm)' } }, [
-          React.createElement(Button, {
-            key: 'crawl-btn',
-            onClick: handleCrawlShop,
-            disabled: crawlingShop || !shopUrl.trim() || !shopApiKey.trim(),
-            variant: 'primary',
-            style: { flex: 1 }
-          }, crawlingShop ? '⏳ Đang crawl shop...' : '🚀 Crawl Shop Products'),
-          
-          shopApiKey && React.createElement(Button, {
-            key: 'save-api',
-            onClick: () => {
-              localStorage.setItem('shopApiKey', shopApiKey);
-              alert('✅ API Key đã được lưu!');
-            },
-            variant: 'secondary'
-          }, '💾 Lưu API Key')
-        ])
-      ])
-    ]),
-
     // Progress Bar
     progress.total > 0 && React.createElement('div', {
       key: 'progress-section',
@@ -1914,18 +1956,71 @@ function App() {
         border: '1px solid rgba(255, 255, 255, 0.2)',
         boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)'
       }
-    },
-      React.createElement('h3', { 
-        key: 'results-title',
-        style: { 
-          marginBottom: '20px', 
-          fontSize: '24px',
-          fontWeight: '700',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent'
-        } 
-      }, '📈 Kết quả'),
+    }, [
+      React.createElement('div', {
+        key: 'results-header',
+        style: {
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '20px'
+        }
+      }, [
+        React.createElement('h3', { 
+          key: 'results-title',
+          style: { 
+            margin: 0,
+            fontSize: '24px',
+            fontWeight: '700',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent'
+          } 
+        }, '📈 Kết quả'),
+        
+        // Bulk actions
+        selectedResultIds.length > 0 && React.createElement('div', {
+          key: 'bulk-actions',
+          style: {
+            display: 'flex',
+            gap: '10px',
+            alignItems: 'center',
+            padding: '10px 16px',
+            background: 'linear-gradient(135deg, rgba(102,126,234,0.1) 0%, rgba(118,75,162,0.1) 100%)',
+            borderRadius: '12px',
+            border: '1px solid rgba(102,126,234,0.2)'
+          }
+        }, [
+          React.createElement('span', {
+            key: 'count',
+            style: {
+              fontWeight: '600',
+              color: '#667eea',
+              fontSize: '14px'
+            }
+          }, `${selectedResultIds.length} đã chọn`),
+          React.createElement(Button, {
+            key: 'recrawl',
+            variant: 'secondary',
+            onClick: handleRecrawlSelected,
+            style: {
+              background: '#dbeafe',
+              color: '#1e40af',
+              border: '1px solid #93c5fd'
+            }
+          }, '↻ Crawl lại'),
+          React.createElement(Button, {
+            key: 'delete',
+            variant: 'secondary',
+            onClick: handleDeleteSelected,
+            style: {
+              background: '#fee2e2',
+              color: '#991b1b',
+              border: '1px solid #fecaca'
+            }
+          }, '🗑 Xóa')
+        ])
+      ]),
       
       React.createElement('div', { 
         key: 'results-table',
@@ -1943,8 +2038,26 @@ function App() {
           }
         },
           React.createElement('thead', null,
-            React.createElement('tr', null,
+            React.createElement('tr', null, [
               React.createElement('th', { 
+                key: 'select-header',
+                style: { 
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  color: 'white',
+                  padding: '16px',
+                  textAlign: 'center',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  width: '50px'
+                } 
+              }, React.createElement('input', {
+                type: 'checkbox',
+                checked: results.length > 0 && selectedResultIds.length === results.length,
+                onChange: toggleSelectAllResults,
+                style: { cursor: 'pointer', width: '16px', height: '16px' }
+              })),
+              React.createElement('th', { 
+                key: 'link',
                 style: { 
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   color: 'white',
@@ -1957,6 +2070,7 @@ function App() {
                 } 
               }, 'Link'),
               React.createElement('th', { 
+                key: 'shop',
                 style: { 
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   color: 'white',
@@ -1969,6 +2083,21 @@ function App() {
                 } 
               }, 'Shop'),
               React.createElement('th', { 
+                key: 'note',
+                style: { 
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  color: 'white',
+                  padding: '16px',
+                  textAlign: 'left',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  minWidth: '200px'
+                } 
+              }, 'Note'),
+              React.createElement('th', { 
+                key: 'shop-sold',
                 style: { 
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   color: 'white',
@@ -1981,6 +2110,7 @@ function App() {
                 } 
               }, 'Đã bán (Shop)'),
               React.createElement('th', { 
+                key: 'product',
                 style: { 
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   color: 'white',
@@ -1993,6 +2123,7 @@ function App() {
                 } 
               }, 'Sản phẩm'),
               React.createElement('th', { 
+                key: 'product-sold',
                 style: { 
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   color: 'white',
@@ -2004,7 +2135,7 @@ function App() {
                   letterSpacing: '0.5px'
                 } 
               }, 'Đã bán (SP)')
-            )
+            ])
           ),
           React.createElement('tbody', null,
             results.map((r, i) =>
@@ -2012,10 +2143,27 @@ function App() {
                 key: i,
                 style: {
                   transition: 'all 0.2s ease',
-                  borderBottom: i < results.length - 1 ? '1px solid #f0f0f0' : 'none'
+                  borderBottom: i < results.length - 1 ? '1px solid #f0f0f0' : 'none',
+                  background: selectedResultIds.includes(i) ? '#f0f4ff' : (i % 2 === 0 ? 'white' : '#f9fafb')
                 }
-              },
+              }, [
+                // Checkbox column
                 React.createElement('td', { 
+                  key: 'select',
+                  style: { 
+                    padding: '16px', 
+                    textAlign: 'center'
+                  } 
+                }, React.createElement('input', {
+                  type: 'checkbox',
+                  checked: selectedResultIds.includes(i),
+                  onChange: () => toggleSelectResult(i),
+                  style: { cursor: 'pointer', width: '16px', height: '16px' }
+                })),
+                
+                // Link column
+                React.createElement('td', { 
+                  key: 'link',
                   style: { 
                     padding: '16px', 
                     fontSize: '13px',
@@ -2034,7 +2182,10 @@ function App() {
                     style: { position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '2px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer', opacity: hoveredResultIndex === i ? 1 : 0, transition: 'opacity 0.15s ease' }
                   }, copiedId === `res-${i}` ? '✅' : '📋')
                 ]),
+                
+                // Shop column
                 React.createElement('td', { 
+                  key: 'shop',
                   style: { 
                     padding: '16px', 
                     fontSize: '14px',
@@ -2042,14 +2193,114 @@ function App() {
                     fontWeight: '500'
                   } 
                 }, r.error ? '—' : (r.shopName || '—')),
+                
+                // Note column
                 React.createElement('td', { 
+                  key: 'note',
+                  style: { 
+                    padding: '16px', 
+                    fontSize: '14px',
+                    color: '#333',
+                    minWidth: '200px'
+                  } 
+                }, editingResultIndex === i 
+                  ? React.createElement('div', {
+                      style: {
+                        display: 'flex',
+                        gap: '8px',
+                        alignItems: 'center'
+                      }
+                    }, [
+                      React.createElement('input', {
+                        key: 'input',
+                        type: 'text',
+                        value: resultNotes[i] || '',
+                        onChange: (e) => setResultNotes(prev => ({ ...prev, [i]: e.target.value })),
+                        placeholder: 'Nhập ghi chú...',
+                        style: {
+                          flex: 1,
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid #e5e7eb',
+                          fontSize: '13px',
+                          outline: 'none'
+                        }
+                      }),
+                      React.createElement('button', {
+                        key: 'save',
+                        onClick: () => handleSaveResultNote(i),
+                        style: {
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: 'none',
+                          background: '#10b981',
+                          color: 'white',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }
+                      }, '💾 Lưu'),
+                      React.createElement('button', {
+                        key: 'cancel',
+                        onClick: () => setEditingResultIndex(null),
+                        style: {
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid #e5e7eb',
+                          background: 'white',
+                          color: '#666',
+                          fontSize: '12px',
+                          cursor: 'pointer'
+                        }
+                      }, '✖')
+                    ])
+                  : React.createElement('div', {
+                      style: {
+                        display: 'flex',
+                        gap: '8px',
+                        alignItems: 'center'
+                      }
+                    }, [
+                      React.createElement('span', {
+                        key: 'text',
+                        style: {
+                          flex: 1,
+                          color: resultNotes[i] ? '#333' : '#9ca3af',
+                          fontStyle: resultNotes[i] ? 'normal' : 'italic'
+                        }
+                      }, resultNotes[i] || 'Chưa có ghi chú'),
+                      React.createElement('button', {
+                        key: 'edit',
+                        onClick: () => setEditingResultIndex(i),
+                        style: {
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #e5e7eb',
+                          background: 'white',
+                          color: '#667eea',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }
+                      }, '✏️ Sửa')
+                    ])
+                ),
+                
+                // Shop Sold column
+                React.createElement('td', { 
+                  key: 'shop-sold',
                   style: { 
                     padding: '16px', 
                     fontSize: '14px',
                     color: '#333'
                   } 
                 }, r.error ? '—' : (r.shopSold || '—')),
+                
+                // Product column
                 React.createElement('td', { 
+                  key: 'product',
                   style: { 
                     padding: '16px', 
                     fontSize: '14px',
@@ -2061,19 +2312,22 @@ function App() {
                   r.reason && React.createElement('span', { key: 'reason', style: { fontSize: 12, color: '#9ca3af' } }, `Lý do: ${r.reason}`),
                   r.suggestion && React.createElement('span', { key: 'sug', style: { fontSize: 12, color: '#f59e0b', marginTop: 4 } }, `💡 ${r.suggestion}`)
                 ]) : (r.productName || '—')),
+                
+                // Product Sold column
                 React.createElement('td', { 
+                  key: 'product-sold',
                   style: { 
                     padding: '16px', 
                     fontSize: '14px',
                     color: '#333'
                   } 
                 }, r.error ? '—' : (r.productSold || '—'))
-              )
+              ])
             )
           )
         )
       )
-    ),
+    ]),
 
     ]), // End Crawler Tab
 
@@ -2226,6 +2480,50 @@ function App() {
         ])
       ]),
       
+      // Bulk actions bar
+      selectedResultIds.length > 0 && React.createElement('div', {
+        key: 'bulk-actions-bar',
+        style: {
+          display: 'flex',
+          gap: '10px',
+          alignItems: 'center',
+          padding: '12px 20px',
+          marginBottom: '16px',
+          background: 'linear-gradient(135deg, rgba(102,126,234,0.1) 0%, rgba(118,75,162,0.1) 100%)',
+          borderRadius: '12px',
+          border: '1px solid rgba(102,126,234,0.2)'
+        }
+      }, [
+        React.createElement('span', {
+          key: 'count',
+          style: {
+            fontWeight: '600',
+            color: '#667eea',
+            fontSize: '14px'
+          }
+        }, `${selectedResultIds.length} shop đã chọn`),
+        React.createElement(Button, {
+          key: 'recrawl',
+          variant: 'secondary',
+          onClick: handleRecrawlSelected,
+          style: {
+            background: '#dbeafe',
+            color: '#1e40af',
+            border: '1px solid #93c5fd'
+          }
+        }, '↻ Crawl lại'),
+        React.createElement(Button, {
+          key: 'delete',
+          variant: 'secondary',
+          onClick: handleDeleteSelected,
+          style: {
+            background: '#fee2e2',
+            color: '#991b1b',
+            border: '1px solid #fecaca'
+          }
+        }, '🗑 Xóa')
+      ]),
+      
       (() => {
         // Build time-series data: { shopKey: { name, url, dates: { '2025-10-23': { sold, growth } } } }
         const shopData = {};
@@ -2251,13 +2549,33 @@ function App() {
             shopData[shopKey].dates[date] = {
               sold: sold,
               soldText: it.shopSold || '—',
-              growth: it.shopGrowth,
+              growth: null, // Will calculate later
               timestamp: it.updatedAt || it.createdAt
             };
           }
         }
         
         const sortedDates = Array.from(allDates).sort();
+        
+        // Calculate growth for each shop across dates
+        Object.values(shopData).forEach(shop => {
+          let previousSold = null;
+          sortedDates.forEach(date => {
+            const dayData = shop.dates[date];
+            if (dayData && dayData.sold !== null) {
+              if (previousSold !== null && previousSold > 0) {
+                const diff = dayData.sold - previousSold;
+                const percent = ((diff / previousSold) * 100).toFixed(1);
+                dayData.growth = {
+                  diff: diff,
+                  percent: parseFloat(percent)
+                };
+              }
+              previousSold = dayData.sold;
+            }
+          });
+        });
+        
         const shops = Object.values(shopData).sort((a, b) => a.name.localeCompare(b.name));
         
         return React.createElement('div', { 
@@ -2312,7 +2630,28 @@ function App() {
           React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 13, background: 'white', minWidth: '800px' } }, [
             // Header
             React.createElement('thead', { key: 'thead' }, React.createElement('tr', { style: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' } }, [
-              React.createElement('th', { key: 'name', style: { padding: '14px 20px', textAlign: 'left', fontWeight: 700, fontSize: 14, position: 'sticky', left: 0, background: '#667eea', zIndex: 10, borderRight: '1px solid rgba(255,255,255,0.2)' } }, 'Store Name'),
+              React.createElement('th', { 
+                key: 'checkbox', 
+                style: { 
+                  padding: '14px 16px', 
+                  textAlign: 'center', 
+                  fontWeight: 700, 
+                  fontSize: 14, 
+                  position: 'sticky', 
+                  left: 0, 
+                  background: '#667eea', 
+                  zIndex: 10, 
+                  borderRight: '1px solid rgba(255,255,255,0.2)',
+                  width: '50px'
+                } 
+              }, React.createElement('input', {
+                type: 'checkbox',
+                checked: history.length > 0 && selectedResultIds.length === history.length,
+                onChange: toggleSelectAllResults,
+                style: { cursor: 'pointer', width: '16px', height: '16px' }
+              })),
+              React.createElement('th', { key: 'name', style: { padding: '14px 20px', textAlign: 'left', fontWeight: 700, fontSize: 14, position: 'sticky', left: 50, background: '#667eea', zIndex: 10, borderRight: '1px solid rgba(255,255,255,0.2)' } }, 'Store Name'),
+              React.createElement('th', { key: 'note', style: { padding: '14px 20px', textAlign: 'left', fontWeight: 700, fontSize: 14, minWidth: 200, borderRight: '1px solid rgba(255,255,255,0.2)' } }, 'Note'),
               React.createElement('th', { key: 'url', style: { padding: '14px 20px', textAlign: 'left', fontWeight: 700, fontSize: 14, minWidth: 250, borderRight: '1px solid rgba(255,255,255,0.2)' } }, 'Store URL'),
               ...sortedDates.map((date, idx) => {
                 // Convert YYYY-MM-DD to DD/MM/YYYY
@@ -2339,20 +2678,44 @@ function App() {
               React.createElement('tr', { 
                 key: `shop-${shopIdx}`, 
                 style: { 
-                  background: shopIdx % 2 === 0 ? 'white' : '#f9fafb',
+                  background: selectedResultIds.includes(shopIdx) ? '#f0f4ff' : (shopIdx % 2 === 0 ? 'white' : '#f9fafb'),
                   borderBottom: shopIdx < shops.length - 1 ? '1px solid #e5e7eb' : 'none',
                   transition: 'background 0.15s, box-shadow 0.15s',
                   cursor: 'default'
                 },
                 onMouseEnter: (e) => {
-                  e.currentTarget.style.background = '#f0f4ff';
+                  if (!selectedResultIds.includes(shopIdx)) {
+                    e.currentTarget.style.background = '#f0f4ff';
+                  }
                   e.currentTarget.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.15)';
                 },
                 onMouseLeave: (e) => {
-                  e.currentTarget.style.background = shopIdx % 2 === 0 ? 'white' : '#f9fafb';
+                  if (!selectedResultIds.includes(shopIdx)) {
+                    e.currentTarget.style.background = shopIdx % 2 === 0 ? 'white' : '#f9fafb';
+                  }
                   e.currentTarget.style.boxShadow = 'none';
                 }
               }, [
+                // Checkbox cell
+                React.createElement('td', { 
+                  key: 'checkbox', 
+                  style: { 
+                    padding: '14px 16px', 
+                    textAlign: 'center',
+                    position: 'sticky',
+                    left: 0,
+                    background: 'inherit',
+                    zIndex: 5,
+                    borderRight: '1px solid #e5e7eb'
+                  } 
+                }, React.createElement('input', {
+                  type: 'checkbox',
+                  checked: selectedResultIds.includes(shopIdx),
+                  onChange: () => toggleSelectResult(shopIdx),
+                  style: { cursor: 'pointer', width: '16px', height: '16px' }
+                })),
+                
+                // Store Name cell
                 React.createElement('td', { 
                   key: 'name', 
                   style: { 
@@ -2361,12 +2724,108 @@ function App() {
                     color: '#111827',
                     fontSize: 14,
                     position: 'sticky',
-                    left: 0,
+                    left: 50,
                     background: 'inherit',
                     zIndex: 5,
                     borderRight: '1px solid #e5e7eb'
                   } 
                 }, shop.name),
+                
+                // Note cell
+                React.createElement('td', { 
+                  key: 'note', 
+                  style: { 
+                    padding: '14px 20px',
+                    minWidth: 200,
+                    borderRight: '1px solid #e5e7eb'
+                  } 
+                }, editingResultIndex === shopIdx 
+                  ? React.createElement('div', {
+                      style: {
+                        display: 'flex',
+                        gap: '8px',
+                        alignItems: 'center'
+                      }
+                    }, [
+                      React.createElement('input', {
+                        key: 'input',
+                        type: 'text',
+                        value: resultNotes[shopIdx] || '',
+                        onChange: (e) => setResultNotes(prev => ({ ...prev, [shopIdx]: e.target.value })),
+                        placeholder: 'Nhập ghi chú...',
+                        style: {
+                          flex: 1,
+                          padding: '6px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #d1d5db',
+                          fontSize: '13px',
+                          outline: 'none'
+                        }
+                      }),
+                      React.createElement('button', {
+                        key: 'save',
+                        onClick: () => handleSaveResultNote(shopIdx),
+                        style: {
+                          padding: '5px 10px',
+                          borderRadius: '4px',
+                          border: 'none',
+                          background: '#10b981',
+                          color: 'white',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }
+                      }, '💾 Lưu'),
+                      React.createElement('button', {
+                        key: 'cancel',
+                        onClick: () => setEditingResultIndex(null),
+                        style: {
+                          padding: '5px 10px',
+                          borderRadius: '4px',
+                          border: '1px solid #d1d5db',
+                          background: 'white',
+                          color: '#666',
+                          fontSize: '11px',
+                          cursor: 'pointer'
+                        }
+                      }, '✖')
+                    ])
+                  : React.createElement('div', {
+                      style: {
+                        display: 'flex',
+                        gap: '8px',
+                        alignItems: 'center'
+                      }
+                    }, [
+                      React.createElement('span', {
+                        key: 'text',
+                        style: {
+                          flex: 1,
+                          color: resultNotes[shopIdx] ? '#111827' : '#9ca3af',
+                          fontStyle: resultNotes[shopIdx] ? 'normal' : 'italic',
+                          fontSize: '13px'
+                        }
+                      }, resultNotes[shopIdx] || 'Chưa có ghi chú'),
+                      React.createElement('button', {
+                        key: 'edit',
+                        onClick: () => setEditingResultIndex(shopIdx),
+                        style: {
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid #d1d5db',
+                          background: 'white',
+                          color: '#667eea',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }
+                      }, '✏️ Sửa')
+                    ])
+                ),
+                
+                // Store URL cell
                 React.createElement('td', { 
                   key: 'url', 
                   style: { 
@@ -2401,19 +2860,27 @@ function App() {
                       borderRight: dateIdx < sortedDates.length - 1 ? '1px solid #e5e7eb' : 'none'
                     } 
                   }, [
-                    React.createElement('div', { key: 'sold', style: { fontWeight: 700, color: '#111827', fontSize: 14, marginBottom: 4 } }, dayData.soldText),
+                    React.createElement('div', { 
+                      key: 'sold', 
+                      style: { 
+                        fontWeight: 700, 
+                        color: '#111827', 
+                        fontSize: 14, 
+                        marginBottom: dayData.growth ? 6 : 0 
+                      } 
+                    }, dayData.soldText),
                     dayData.growth && React.createElement('div', { 
                       key: 'growth', 
                       style: { 
-                        fontSize: 12, 
+                        fontSize: 11, 
                         color: dayData.growth.diff >= 0 ? '#10b981' : '#ef4444',
                         fontWeight: 600,
-                        padding: '2px 8px',
+                        padding: '3px 8px',
                         borderRadius: 6,
                         background: dayData.growth.diff >= 0 ? '#d1fae5' : '#fee2e2',
                         display: 'inline-block'
                       } 
-                    }, `${dayData.growth.diff >= 0 ? '+' : ''}${dayData.growth.diff >= 1000 ? (dayData.growth.diff/1000).toFixed(1)+'K' : dayData.growth.diff}`)
+                    }, `${dayData.growth.diff >= 0 ? '+' : ''}${dayData.growth.diff >= 1000 ? (dayData.growth.diff/1000).toFixed(1)+'K' : dayData.growth.diff} (${dayData.growth.diff >= 0 ? '+' : ''}${dayData.growth.percent}%)`)
                   ]);
                 })
               ])
@@ -2425,273 +2892,7 @@ function App() {
     ]),
     ]), // End Results Tab
 
-    // History Tab Content
-    activeTab === 'history' && React.createElement(React.Fragment, null, [
-    // History Table (with Group by Shop toggle)
-    React.createElement('div', { key: 'hist', style: { marginTop: 20, background: 'rgba(255,255,255,0.7)', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.1)' } }, [
-      React.createElement('div', { key: 'hist-head', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 } }, [
-        React.createElement('h3', { key: 'h3', style: { margin: 0, fontSize: 20, fontWeight: 700, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } }, '🗂️ Lịch sử'),
-        React.createElement('div', { key: 'right-controls', style: { display: 'flex', alignItems: 'center', gap: 12 } }, [
-          React.createElement('label', { key: 'selall', style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' } }, [
-            React.createElement('input', { type: 'checkbox', checked: history.length > 0 && selectedIds.length === history.length, onChange: toggleSelectAll }),
-            React.createElement('span', null, 'Chọn tất cả')
-          ]),
-          React.createElement('label', { key: 'group-toggle', style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#374151' } }, [
-            React.createElement('input', { key: 'cb', type: 'checkbox', checked: groupByShop, onChange: e => handleToggleGroupByShop(e.target.checked) }),
-            React.createElement('span', { key: 'lbl' }, 'Gộp theo Shop')
-          ])
-        ])
-      ]),
-      selectedIds.length > 0 && React.createElement('div', { key: 'bulkbar', style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', border: '1px solid #e5e7eb' } }, [
-        React.createElement('span', { key: 'selcount', style: { fontWeight: 600, color: '#374151' } }, `${selectedIds.length} mục đã chọn`),
-        React.createElement(Button, { key: 'bulkCrawlShops', variant: 'primary', onClick: handleBulkCrawlShops, disabled: crawlingShop }, crawlingShop ? '⏳ Đang crawl...' : '🏪 Crawl Shops'),
-        React.createElement(Button, { key: 'bulkRecrawl', variant: 'secondary', onClick: handleBulkRecrawl }, '↻ Crawl lại đã chọn'),
-        React.createElement(Button, { key: 'bulkDelete', variant: 'secondary', onClick: handleBulkDelete, style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa đã chọn')
-      ]),
-      !groupByShop ? (
-        React.createElement('div', { key: 'tbl', style: { overflowX: 'auto' } },
-          React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0, background: 'white', borderRadius: 12, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.08)' } }, [
-            React.createElement('thead', { key: 'th' }, React.createElement('tr', null, [
-              React.createElement('th', { key: 'sel-h', style: { width: 42, background: 'var(--color-primary)', color: '#fff', padding: 14, textAlign: 'center' } },
-                React.createElement('input', { type: 'checkbox', checked: history.length > 0 && selectedIds.length === history.length, onChange: toggleSelectAll })
-              ),
-              'Link','Shop','Số SP','SP','Đã bán (Shop)','Đã bán (SP)','Thời gian','Note','Hành động'
-            ].map((h, idx) => typeof h === 'string' ? React.createElement('th', { key: 'hh'+idx, style: { background: 'var(--color-primary)', color: '#fff', padding: 14, textAlign: 'left', fontSize: 13, fontWeight: '600', borderLeft: idx===0 ? 'none' : '1px solid rgba(255,255,255,0.2)' } }, h) : h))),
-            React.createElement('tbody', { key: 'tb' }, paginatedHistory.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { background: idx % 2 === 0 ? '#fbfbff' : '#fff', transition: 'background 0.2s', borderBottom: '1px solid #f3f4f6' } }, [
-              React.createElement('td', { style: { padding: 12, textAlign: 'center', borderRight: '1px solid #f3f4f6' } },
-                React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
-              ),
-              React.createElement('td', { style: { position: 'relative', padding: 14, maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#2563eb' },
-                onMouseEnter: () => setHoveredHistoryId(it.id),
-                onMouseLeave: () => setHoveredHistoryId(null)
-              }, [
-                React.createElement('a', { key: 'a', href: it.url, target: '_blank', rel: 'noopener noreferrer', title: it.url, style: { color: '#2563eb', textDecoration: 'none', paddingRight: 28, display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.url),
-                React.createElement('button', { key: 'copy', onClick: () => copyToClipboard(it.url, it.id), title: 'Copy link', style: { position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '2px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer', opacity: hoveredHistoryId === it.id ? 1 : 0, transition: 'opacity 0.15s ease' } }, copiedId === it.id ? '✅' : '📋')
-              ]),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, it.shopName || '—'),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', textAlign: 'center', color: '#111827', fontWeight: 600 } }, (() => { const k = it.shopId || it.shopSlug || it.shopName || 'unknown'; return shopCounts[k] || 1; })()),
-              React.createElement('td', { style: { padding: 14, maxWidth: 280, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderLeft: '1px solid #f3f4f6' } }, it.productName || '—'),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', textAlign: 'center' } }, it.shopSold || '—'),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', textAlign: 'center' } }, it.productSold || '—'),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6', fontSize: 13, color: 'var(--color-gray-600)', whiteSpace: 'nowrap' }, title: it.createdAt }, formatTime(it.createdAt)),
-              React.createElement('td', { style: { padding: 14, borderLeft: '1px solid #f3f4f6' } }, (
-                editingId === it.id
-                  ? React.createElement('input', { value: editingNote, onChange: e => setEditingNote(e.target.value), style: { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none' } })
-                  : (it.note || '')
-              )),
-              React.createElement('td', { style: { padding: 14, display: 'flex', gap: 8, flexWrap: 'wrap', borderLeft: '1px solid #f3f4f6' } }, [
-                React.createElement(Button, { key: 'rec'+idx, variant: 'secondary', onClick: () => handleRecrawlItem(it.url) }, '↻ Crawl lại'),
-                editingId === it.id
-                  ? React.createElement(Button, { key: 'save'+idx, variant: 'primary', onClick: () => handleSaveEdit(it) }, '💾 Lưu')
-                  : React.createElement(Button, { key: 'edit'+idx, variant: 'secondary', onClick: () => handleStartEdit(it) }, '✏️ Sửa'),
-                editingId === it.id
-                  ? React.createElement(Button, { key: 'cancel'+idx, variant: 'secondary', onClick: handleCancelEdit, style: { background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb' } }, '✖ Hủy')
-                  : null,
-                React.createElement(Button, { key: 'del'+idx, variant: 'secondary', onClick: () => handleDeleteItem(it.id), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa')
-              ])
-            ])))
-          ]))
-      ) : (
-        // Grouped view
-        (() => {
-          const groups = {};
-          for (const it of paginatedHistory) {
-            const key = it.shopId || it.shopSlug || it.shopName || 'unknown';
-            if (!groups[key]) groups[key] = { key, shopId: it.shopId || null, shopSlug: it.shopSlug || null, shopName: it.shopName || it.shopSlug || 'Unknown Shop', items: [] };
-            groups[key].items.push(it);
-          }
-          const groupArr = Object.values(groups).sort((a,b) => String(a.shopName).localeCompare(String(b.shopName)));
-          const groupKeys = groupArr.map(g => g.key);
-          return React.createElement('div', { key: 'groups', style: { display: 'flex', flexDirection: 'column', gap: 16 } }, [
-            React.createElement('div', { key: 'toggles', style: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 8 } }, [
-              React.createElement(Button, { key: 'collapseAll', variant: 'secondary', onClick: () => collapseAllGroups(groupKeys) }, 'Thu gọn tất cả'),
-              React.createElement(Button, { key: 'expandAll', variant: 'secondary', onClick: () => expandAllGroups(groupKeys) }, 'Mở rộng tất cả')
-            ]),
-            ...groupArr.map((g, gi) => React.createElement('div', { key: g.key || gi, style: { border: '1px solid #e5e7eb', borderRadius: 12, background: 'white', overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.06)' } }, [
-              React.createElement('div', { key: 'hdr', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)', borderBottom: '1px solid #e5e7eb' } }, [
-                React.createElement('div', { key: 'left', style: { display: 'flex', alignItems: 'center', gap: 10 } }, [
-                  React.createElement('button', { key: 'toggle', onClick: () => setGroupCollapsed(g.key, !collapsedGroups[g.key]), title: collapsedGroups[g.key] ? 'Mở rộng' : 'Thu gọn', style: { border: '1px solid #e5e7eb', background: '#fff', borderRadius: 8, width: 28, height: 28, cursor: 'pointer' } }, collapsedGroups[g.key] ? '▶' : '▼'),
-                  React.createElement('input', { key: 'selgrp', type: 'checkbox', checked: g.items.every(it => selectedIds.includes(it.id)), onChange: (e) => {
-                    const allIds = g.items.map(it => it.id);
-                    if (e.target.checked) {
-                      setSelectedIds(prev => Array.from(new Set([...prev, ...allIds])));
-                    } else {
-                      setSelectedIds(prev => prev.filter(id => !allIds.includes(id)));
-                    }
-                  } }),
-                  React.createElement('div', { key: 'title', style: { display: 'flex', alignItems: 'baseline', gap: 10 } }, [
-                    React.createElement('span', { key: 'name', style: { fontWeight: 700, color: '#111827' } }, g.shopName),
-                    React.createElement('span', { key: 'cnt', style: { fontSize: 12, color: '#6b7280' } }, `(${g.items.length} sản phẩm)`) 
-                  ])
-                ]),
-                React.createElement('div', { key: 'actions', style: { display: 'flex', gap: 8, alignItems: 'center' } }, [
-                  React.createElement(Button, { 
-                    key: 'shop', 
-                    variant: 'secondary', 
-                    onClick: () => handleCrawlShopOnly(g.key, g.items), 
-                    disabled: shopOnlyResults[g.key]?.loading,
-                    style: { background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' } 
-                  }, shopOnlyResults[g.key]?.loading ? '⏳ Đang crawl...' : '🏪 Crawl Shop'),
-                  shopOnlyResults[g.key] && !shopOnlyResults[g.key].loading && (
-                    shopOnlyResults[g.key].error 
-                      ? React.createElement('span', { key: 'err', style: { fontSize: 13, color: '#ef4444', fontWeight: 500 } }, `❌ ${shopOnlyResults[g.key].error}`)
-                      : React.createElement('div', { key: 'res', style: { display: 'flex', flexDirection: 'column', gap: 2 } }, [
-                          React.createElement('div', { key: 'main', style: { fontSize: 13, color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 } }, [
-                            React.createElement('span', { key: 'icon' }, '📦'),
-                            React.createElement('span', { key: 'sold' }, `Tổng: ${shopOnlyResults[g.key].shopSold}`)
-                          ]),
-                          shopOnlyResults[g.key].growth && React.createElement('div', { key: 'growth', style: { fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 } }, [
-                            React.createElement('span', { key: 'icon', style: { fontSize: 14 } }, shopOnlyResults[g.key].growth.diff >= 0 ? '📈' : '📉'),
-                            React.createElement('span', { 
-                              key: 'text', 
-                              style: { color: shopOnlyResults[g.key].growth.diff >= 0 ? '#10b981' : '#ef4444' } 
-                            }, `${shopOnlyResults[g.key].growth.diff >= 0 ? '+' : ''}${shopOnlyResults[g.key].growth.diff} (${shopOnlyResults[g.key].growth.percent >= 0 ? '+' : ''}${shopOnlyResults[g.key].growth.percent}%)`)
-                          ])
-                        ])
-                  ),
-                  React.createElement(Button, { key: 'recg', variant: 'secondary', onClick: () => handleRecrawlGroup(g.items) }, '↻ Crawl cả nhóm'),
-                  React.createElement(Button, { key: 'delg', variant: 'secondary', onClick: () => handleDeleteGroup(g.items), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa nhóm')
-                ])
-              ]),
-              !collapsedGroups[g.key] && React.createElement('div', { key: 'list', style: { overflowX: 'auto' } },
-                React.createElement('table', { style: { width: '100%', borderCollapse: 'separate', borderSpacing: 0 } }, [
-                  React.createElement('thead', { key: 'th' }, React.createElement('tr', null, (compactView ? ['Chọn','Sản phẩm','Đã bán (Shop)','Tăng trưởng Shop','Thời gian'] : ['Chọn','Link','Sản phẩm','Đã bán (Shop)','Đã bán (SP)','Tăng trưởng SP','Tăng trưởng Shop','Thời gian','Note','Hành động']).map((h, idx) => React.createElement('th', { key: 'h'+idx, style: { background: 'var(--color-gray-100)', color: 'var(--color-gray-700)', padding: 12, textAlign: 'left', fontSize: 13, fontWeight: '600', borderBottom: '1px solid var(--color-gray-200)' } }, h)))),
-                  React.createElement('tbody', { key: 'tb' }, g.items.map((it, idx) => React.createElement('tr', { key: it.id || idx, style: { borderBottom: '1px solid #f3f4f6' } }, compactView ? [
-                    // Compact View
-                    React.createElement('td', { key: 'sel', style: { padding: 8, textAlign: 'center' } },
-                      React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
-                    ),
-                    React.createElement('td', { key: 'prod', style: { padding: 8, maxWidth: 300 } }, [
-                      React.createElement('div', { key: 'name', style: { fontWeight: 600, fontSize: 13, marginBottom: 2 } }, it.productName || '—'),
-                      React.createElement('a', { key: 'url', href: it.url, target: '_blank', style: { fontSize: 11, color: '#9ca3af' }, title: it.url }, it.url.substring(0, 40) + '...')
-                    ]),
-                    React.createElement('td', { key: 'sold', style: { padding: 8, textAlign: 'center', fontWeight: 600 } }, it.shopSold || '—'),
-                    React.createElement('td', { key: 'growth', style: { padding: 8, textAlign: 'center' } }, 
-                      it.shopGrowth 
-                        ? React.createElement('span', { 
-                            style: { fontSize: 13, fontWeight: 600, color: it.shopGrowth.diff >= 0 ? '#10b981' : '#ef4444' } 
-                          }, `${it.shopGrowth.diff >= 0 ? '📈 +' : '📉 '}${it.shopGrowth.diff} (${it.shopGrowth.percent >= 0 ? '+' : ''}${it.shopGrowth.percent}%)`)
-                        : '—'
-                    ),
-                    React.createElement('td', { key: 'time', style: { padding: 8, fontSize: 12, color: '#9ca3af' } }, formatTime(it.createdAt))
-                  ] : [
-                    // Detailed View
-                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } },
-                      React.createElement('input', { type: 'checkbox', checked: selectedIds.includes(it.id), onChange: () => toggleSelectOne(it.id) })
-                    ),
-                    React.createElement('td', { style: { position: 'relative', padding: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#2563eb' },
-                      onMouseEnter: () => setHoveredHistoryId(it.id),
-                      onMouseLeave: () => setHoveredHistoryId(null)
-                    }, [
-                      React.createElement('a', { key: 'a', href: it.url, target: '_blank', rel: 'noopener noreferrer', title: it.url, style: { color: '#2563eb', textDecoration: 'none', paddingRight: 28, display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.url),
-                      React.createElement('button', { key: 'copy', onClick: () => copyToClipboard(it.url, it.id), title: 'Copy link', style: { position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', padding: '2px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer', opacity: hoveredHistoryId === it.id ? 1 : 0, transition: 'opacity 0.15s ease' } }, copiedId === it.id ? '✅' : '📋')
-                    ]),
-                    React.createElement('td', { style: { padding: 12, maxWidth: 360, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, it.productName || '—'),
-                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, it.shopSold || '—'),
-                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, it.productSold || '—'),
-                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, 
-                      it.productGrowth 
-                        ? React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' } }, [
-                            React.createElement('span', { key: 'icon', style: { fontSize: 16 } }, it.productGrowth.diff >= 0 ? '📈' : '📉'),
-                            React.createElement('span', { 
-                              key: 'val', 
-                              style: { fontSize: 12, fontWeight: 600, color: it.productGrowth.diff >= 0 ? '#10b981' : '#ef4444' } 
-                            }, `${it.productGrowth.diff >= 0 ? '+' : ''}${it.productGrowth.diff}`),
-                            React.createElement('span', { 
-                              key: 'pct', 
-                              style: { fontSize: 11, color: '#6b7280' } 
-                            }, `(${it.productGrowth.percent >= 0 ? '+' : ''}${it.productGrowth.percent}%)`)
-                          ])
-                        : '—'
-                    ),
-                    React.createElement('td', { style: { padding: 12, textAlign: 'center' } }, 
-                      it.shopGrowth 
-                        ? React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' } }, [
-                            React.createElement('span', { key: 'icon', style: { fontSize: 16 } }, it.shopGrowth.diff >= 0 ? '📈' : '📉'),
-                            React.createElement('span', { 
-                              key: 'val', 
-                              style: { fontSize: 12, fontWeight: 600, color: it.shopGrowth.diff >= 0 ? '#10b981' : '#ef4444' } 
-                            }, `${it.shopGrowth.diff >= 0 ? '+' : ''}${it.shopGrowth.diff}`),
-                            React.createElement('span', { 
-                              key: 'pct', 
-                              style: { fontSize: 11, color: '#6b7280' } 
-                            }, `(${it.shopGrowth.percent >= 0 ? '+' : ''}${it.shopGrowth.percent}%)`)
-                          ])
-                        : '—'
-                    ),
-                    React.createElement('td', { style: { padding: 12, fontSize: 13, color: 'var(--color-gray-600)', whiteSpace: 'nowrap' }, title: it.createdAt }, formatTime(it.createdAt)),
-                    React.createElement('td', { style: { padding: 12 } }, (
-                      editingId === it.id
-                        ? React.createElement('input', { value: editingNote, onChange: e => setEditingNote(e.target.value), style: { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none' } })
-                        : (it.note || '')
-                    )),
-                    React.createElement('td', { style: { padding: 12, display: 'flex', gap: 8, flexWrap: 'wrap' } }, [
-                      React.createElement(Button, { key: 'rec'+idx, variant: 'secondary', onClick: () => handleRecrawlItem(it.url) }, '↻ Crawl lại'),
-                      editingId === it.id
-                        ? React.createElement(Button, { key: 'save'+idx, variant: 'primary', onClick: () => handleSaveEdit(it) }, '💾 Lưu')
-                        : React.createElement(Button, { key: 'edit'+idx, variant: 'secondary', onClick: () => handleStartEdit(it) }, '✏️ Sửa'),
-                      editingId === it.id
-                        ? React.createElement(Button, { key: 'cancel'+idx, variant: 'secondary', onClick: handleCancelEdit, style: { background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb' } }, '✖ Hủy')
-                        : null,
-                      React.createElement(Button, { key: 'del'+idx, variant: 'secondary', onClick: () => handleDeleteItem(it.id), style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' } }, '🗑 Xóa')
-                    ])
-                  ])))
-                ]))
-            ]))
-          ]);
-        })()
-      ),
-      
-      // Pagination Controls
-      processedHistory.length > itemsPerPage && React.createElement('div', { key: 'pagination', style: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 20, padding: '16px 0' } }, [
-        React.createElement('button', {
-          key: 'prev',
-          onClick: () => setCurrentPage(p => Math.max(1, p - 1)),
-          disabled: currentPage === 1,
-          style: { padding: '8px 16px', borderRadius: 8, border: '1px solid #e5e7eb', background: currentPage === 1 ? '#f9fafb' : 'white', cursor: currentPage === 1 ? 'not-allowed' : 'pointer', fontWeight: 600, color: currentPage === 1 ? '#9ca3af' : '#374151' }
-        }, '← Trước'),
-        
-        React.createElement('div', { key: 'pages', style: { display: 'flex', gap: 6 } },
-          Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-            let pageNum;
-            if (totalPages <= 7) {
-              pageNum = i + 1;
-            } else if (currentPage <= 4) {
-              pageNum = i + 1;
-            } else if (currentPage >= totalPages - 3) {
-              pageNum = totalPages - 6 + i;
-            } else {
-              pageNum = currentPage - 3 + i;
-            }
-            
-            return React.createElement('button', {
-              key: pageNum,
-              onClick: () => setCurrentPage(pageNum),
-              style: {
-                padding: '8px 12px',
-                borderRadius: 8,
-                border: '1px solid #e5e7eb',
-                background: currentPage === pageNum ? '#667eea' : 'white',
-                color: currentPage === pageNum ? 'white' : '#374151',
-                cursor: 'pointer',
-                fontWeight: 600,
-                minWidth: 40
-              }
-            }, pageNum);
-          })
-        ),
-        
-        React.createElement('button', {
-          key: 'next',
-          onClick: () => setCurrentPage(p => Math.min(totalPages, p + 1)),
-          disabled: currentPage === totalPages,
-          style: { padding: '8px 16px', borderRadius: 8, border: '1px solid #e5e7eb', background: currentPage === totalPages ? '#f9fafb' : 'white', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', fontWeight: 600, color: currentPage === totalPages ? '#9ca3af' : '#374151' }
-        }, 'Sau →'),
-        
-        React.createElement('span', { key: 'info', style: { marginLeft: 12, fontSize: 14, color: '#6b7280' } }, `Trang ${currentPage} / ${totalPages} (${processedHistory.length} kết quả)`)
-      ])
-    ])
-    ]) // End History Tab
+    // End Results Tab
   );
 }
 

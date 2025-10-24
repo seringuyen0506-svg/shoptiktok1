@@ -35,6 +35,7 @@ backend/debug/
 backend/*.txt
 backend/*.html
 backend/*.png
+backend/tiktok_user_data/
 
 # Temporary files
 tmp/

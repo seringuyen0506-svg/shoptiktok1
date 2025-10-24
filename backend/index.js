@@ -1072,7 +1072,7 @@ app.post('/api/crawl-async', async (req, res) => {
 
     // process in background using existing /api/crawl in small batches
     setImmediate(async () => {
-      const SELF_PORT = process.env.PORT || 5000;
+      const SELF_PORT = process.env.PORT || 8080;
       try {
         const batchSize = 2; // small batches keep memory lower and provide frequent progress updates
         for (let i = 0; i < links.length; i += batchSize) {
@@ -1632,16 +1632,8 @@ app.post('/api/crawl', async (req, res) => {
   const { links, apiKey, note, prefs } = req.body;
   if (!Array.isArray(links)) return res.status(400).json({ error: 'links must be an array' });
   
-  // Concurrency: For bulk crawling (50+ links), limit to 2-3 concurrent browsers max
-  // This prevents server overload and reduces 504 Gateway Timeout errors
-  const requestedConc = Number(req.body?.concurrency);
-  const CONCURRENCY = Math.min(Math.max(Number.isFinite(requestedConc) ? requestedConc : 2, 1), 3);
-  console.log(`⚙️ Concurrency set to ${CONCURRENCY} (requested=${requestedConc || 'default'})`);
-  console.log(`📊 Processing ${links.length} links with ${CONCURRENCY} concurrent browsers`);
-  
-  if (CONCURRENCY > 2) {
-    console.log('⚠️ WARNING: Concurrency > 2 tăng nguy cơ CAPTCHA/gate/524. Khuyến nghị: 1-2 luồng.');
-  }
+  // Sequential crawling only - no concurrency
+  console.log(`📊 Processing ${links.length} links sequentially (one at a time)`);
 
   const results = [];
 
@@ -1653,15 +1645,50 @@ app.post('/api/crawl', async (req, res) => {
     ? { latitude: Number(basePrefs.geolocation.latitude) || 40.7128, longitude: Number(basePrefs.geolocation.longitude) || -74.0060, accuracy: Number(basePrefs.geolocation.accuracy) || 100 }
     : { latitude: 40.7128, longitude: -74.0060, accuracy: 100 };
 
+  // 🔥 Create a single browser instance for this entire crawl session
+  let sessionBrowser = null;
+  let browserWasCreated = false;
+  
+  try {
+    // Use shared browser if available, otherwise create a new one for this session
+    if (sharedBrowser) {
+      console.log('✓ Using existing shared browser (with login + extensions)');
+      sessionBrowser = sharedBrowser;
+    } else {
+      console.log('🌐 Creating new browser instance for this crawl session...');
+      const launchOptions = createLaunchOptions(true); // Use persistent userDataDir
+      launchOptions.headless = false; // Keep browser visible
+      launchOptions.defaultViewport = null;
+      
+      // Add additional args for locale/lang
+      launchOptions.args.push(
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
+        '--ignore-certificate-errors-spki-list',
+        '--disable-software-rasterizer',
+        '--disable-extensions',
+        `--lang=${langPref}`
+      );
+      
+      sessionBrowser = await puppeteer.launch(launchOptions);
+      browserWasCreated = true;
+      console.log('✅ Browser opened successfully! Browser will remain open after crawling completes.');
+      console.log('💡 You can close the browser manually when done.');
+    }
+  } catch (error) {
+    console.error('❌ Failed to create browser:', error.message);
+    return res.status(500).json({ error: 'Failed to create browser: ' + error.message });
+  }
+
   // Worker function to crawl a single URL (mostly existing logic)
   const crawlUrl = async (url) => {
     try {
       console.log('---\nCrawling:', url);
-      // Random delay giữa các request (1-3s) to stagger workers
+      // Random delay giữa các request (1-3s)
       await randomDelay(1000, 3000);
       
       // Puppeteer crawl
-      let browser;
       let html = '';
       let shopName = '', shopSold = '', productName = '', productSold = '';
       try {
@@ -1671,34 +1698,13 @@ app.post('/api/crawl', async (req, res) => {
           console.log('  → Resolved short URL to:', targetUrl);
         }
         
-        // Use shared browser if available, otherwise launch new one
-        let page;
-        if (sharedBrowser) {
-          console.log('✓ Using shared browser (with login + extensions)');
-          browser = sharedBrowser;
-          page = await browser.newPage();
-        } else {
-          console.log('⚠️  No shared browser - launching new headless browser');
-          // Use createLaunchOptions with persistent session (will reuse TikTok login cookies)
-          const launchOptions = createLaunchOptions(true); // true = use persistent userDataDir
-          
-          // Add additional args for locale/lang
-          launchOptions.args.push(
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor',
-            '--ignore-certificate-errors-spki-list',
-            '--disable-software-rasterizer',
-            '--disable-extensions',
-            `--lang=${langPref}`
-          );
-          
-          browser = await puppeteer.launch(launchOptions);
-          page = await browser.newPage();
-        }
+        // 🔥 Use the session browser (always available in this new design)
+        const page = await sessionBrowser.newPage();
+        console.log('✓ Opened new tab in session browser');
+        
         // Emulate timezone + grant geo permission + set geolocation
         try {
-          const context = browser.defaultBrowserContext();
+          const context = sessionBrowser.defaultBrowserContext();
           await context.overridePermissions('https://www.tiktok.com', ['geolocation']);
           await context.overridePermissions('https://vm.tiktok.com', ['geolocation']);
           await page.emulateTimezone(timezonePref);
@@ -1997,11 +2003,9 @@ app.post('/api/crawl', async (req, res) => {
                 message: 'CAPTCHA detected but no API key provided. Please add hmcaptcha API key.',
                 suggestion: 'Thêm API Key hmcaptcha.com hoặc giảm tốc độ/concurrency để giảm CAPTCHA.'
               });
-              if (browser !== sharedBrowser) {
-                await browser.close();
-              } else {
-                await page.close();
-              }
+              // Close only the tab, keep session browser open
+              await page.close();
+              console.log('✓ Tab closed (CAPTCHA no API), browser stays open');
               return;
             }
             
@@ -2018,11 +2022,9 @@ app.post('/api/crawl', async (req, res) => {
                 message: 'CAPTCHA detected, solver failed: ' + (captchaSolved.error || 'Unknown error'),
                 suggestion: 'Cài extension CAPTCHA solver trong shared browser, giảm concurrency, hoặc kiểm tra API key.'
               });
-              if (browser !== sharedBrowser) {
-                await browser.close();
-              } else {
-                await page.close();
-              }
+              // Close only the tab, keep session browser open
+              await page.close();
+              console.log('✓ Tab closed (CAPTCHA failed), browser stays open');
               return;
             }
             
@@ -2075,11 +2077,9 @@ app.post('/api/crawl', async (req, res) => {
                   message: `Still stuck at verification page after reload. HTML size: ${recheckGated.htmlSize}`,
                   suggestion: 'Extension không giải được CAPTCHA. Thử: 1) Check extension hoạt động, 2) VPN đổi IP, 3) Giảm concurrency = 1'
                 });
-                if (browser !== sharedBrowser) {
-                  await browser.close();
-                } else {
-                  await page.close();
-                }
+                // Close only the tab, keep session browser open
+                await page.close();
+                console.log('✓ Tab closed (gate stuck), browser stays open');
                 return;
               } else {
                 console.log(`✅ Reload thành công! HTML size: ${recheckGated.htmlSize}`);
@@ -2093,11 +2093,9 @@ app.post('/api/crawl', async (req, res) => {
                 message: `Cannot reload page: ${reloadError.message}`,
                 suggestion: 'Extension không giải được CAPTCHA hoặc IP bị chặn. Check extension hoạt động.'
               });
-              if (browser !== sharedBrowser) {
-                await browser.close();
-              } else {
-                await page.close();
-              }
+              // Close only the tab, keep session browser open
+              await page.close();
+              console.log('✓ Tab closed (reload failed), browser stays open');
               return;
             }
           } else {
@@ -2170,11 +2168,9 @@ app.post('/api/crawl', async (req, res) => {
                     message: 'CAPTCHA detected late (after selector timeout) and solver failed: ' + (solved.error || 'Unknown'),
                     suggestion: 'Cài extension CAPTCHA solver, giảm concurrency, kiểm tra API key và thử lại.'
                   });
-                  if (browser !== sharedBrowser) {
-                    await browser.close();
-                  } else {
-                    await page.close();
-                  }
+                  // Close only the tab, keep session browser open
+                  await page.close();
+                  console.log('✓ Tab closed (late CAPTCHA failed), browser stays open');
                   return;
                 }
               } else {
@@ -2186,11 +2182,9 @@ app.post('/api/crawl', async (req, res) => {
                   message: `Page stuck at gate/verify. HTML size: ${gateCheck.htmlSize}B`,
                   suggestion: 'IP bị TikTok chặn. Dùng VPN extension, giảm concurrency xuống 1, hoặc thử region khác.'
                 });
-                if (browser !== sharedBrowser) {
-                  await browser.close();
-                } else {
-                  await page.close();
-                }
+                // Close only the tab, keep session browser open
+                await page.close();
+                console.log('✓ Tab closed (gate detected), browser stays open');
                 return;
               }
             } else {
@@ -2201,7 +2195,9 @@ app.post('/api/crawl', async (req, res) => {
                 message: `Page stuck at gate/verify. HTML size: ${gateCheck.htmlSize}B`,
                 suggestion: 'Cần thêm API Key hmcaptcha để thử solve. Ngoài ra, dùng VPN extension/giảm concurrency.'
               });
-              await browser.close();
+              // Close only the tab, keep session browser open
+              await page.close();
+              console.log('✓ Tab closed (gate no API), browser stays open');
               return;
             }
           }
@@ -2479,9 +2475,17 @@ app.post('/api/crawl', async (req, res) => {
           }
         }
         
-        await browser.close();
+        // ✅ Always close only the tab, never close the session browser
+        await page.close();
+        console.log('✓ Tab closed, browser stays open for next URL');
+        
       } catch (err) {
-        if (browser) await browser.close();
+        // ✅ Close tab on error, browser stays open
+        try { 
+          if (page) await page.close(); 
+          console.log('✓ Tab closed (error), browser stays open');
+        } catch {}
+        
         console.error('Puppeteer error:', err.message);
         throw new Error('Puppeteer crawl error: ' + err.message);
       }
@@ -2635,21 +2639,19 @@ app.post('/api/crawl', async (req, res) => {
     }
   };
 
-  // Simple promise pool with progress tracking
-  let idx = 0;
-  let completedCount = 0;
+  // Sequential crawling: process one link at a time
   const startTime = Date.now();
   
-  const workers = Array.from({ length: CONCURRENCY }).map(async (_, workerNum) => {
-    while (true) {
-      const current = idx++;
-      if (current >= links.length) break;
-      const url = links[current];
+  console.log(`🔄 Starting sequential crawl of ${links.length} links (one at a time)`);
+  
+  try {
+    for (let i = 0; i < links.length; i++) {
+      const url = links[i];
       
-      console.log(`🔄 Worker ${workerNum + 1}: Processing link ${current + 1}/${links.length} - ${url.substring(0, 60)}...`);
+      console.log(`\n🔄 Processing link ${i + 1}/${links.length} - ${url.substring(0, 60)}...`);
       await crawlUrl(url);
       
-      completedCount++;
+      const completedCount = i + 1;
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const avgTime = (elapsed / completedCount).toFixed(1);
       const remaining = links.length - completedCount;
@@ -2657,15 +2659,46 @@ app.post('/api/crawl', async (req, res) => {
       
       console.log(`✅ Progress: ${completedCount}/${links.length} (${((completedCount/links.length)*100).toFixed(1)}%) | Avg: ${avgTime}s/link | ETA: ~${estimatedRemaining}s`);
     }
-  });
-
-  await Promise.all(workers);
-  
-  const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-  const successCount = results.filter(r => !r.error && r.status !== 'error').length;
-  console.log(`🎉 COMPLETED: ${successCount}/${links.length} successful | Total time: ${totalTime}s`);
-  
-  res.json({ results });
+    
+    const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+    const successCount = results.filter(r => !r.error && r.status !== 'error').length;
+    console.log(`🎉 COMPLETED: ${successCount}/${links.length} successful | Total time: ${totalTime}s`);
+    
+    // 🔥 DO NOT close browser - let user close it manually
+    if (browserWasCreated) {
+      console.log('');
+      console.log('✅ ============================================');
+      console.log('✅ CRAWLING COMPLETE!');
+      console.log('✅ Browser window is still open for your review');
+      console.log('💡 You can close the browser manually when done');
+      console.log('✅ ============================================');
+      console.log('');
+    }
+    
+    res.json({ 
+      results,
+      message: browserWasCreated ? 'Crawling complete. Browser window remains open - close it manually when done.' : 'Crawling complete.'
+    });
+  } catch (error) {
+    // Even on error, DO NOT close browser - let user investigate
+    console.error('❌ Error during crawl session:', error.message);
+    
+    if (browserWasCreated) {
+      console.log('');
+      console.log('⚠️  ============================================');
+      console.log('⚠️  CRAWLING INTERRUPTED BY ERROR');
+      console.log('⚠️  Browser window is still open for debugging');
+      console.log('💡 You can close the browser manually');
+      console.log('⚠️  ============================================');
+      console.log('');
+    }
+    
+    res.status(500).json({ 
+      error: error.message,
+      results,
+      message: browserWasCreated ? 'Error occurred. Browser window remains open for debugging - close it manually.' : 'Error occurred during crawling.'
+    });
+  }
 });
 
 // Solve captcha endpoint

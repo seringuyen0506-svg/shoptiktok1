@@ -105,7 +105,7 @@ echo "⚙️  [8/11] Creating environment configuration..."
 cat > /var/www/shoptiktok1/backend/.env << 'ENVEOF'
 ALLOW_ORIGINS=https://DOMAIN_PLACEHOLDER,http://DOMAIN_PLACEHOLDER,https://www.DOMAIN_PLACEHOLDER,http://www.DOMAIN_PLACEHOLDER
 NODE_ENV=production
-PORT=5000
+PORT=8080
 ENVEOF
 
 # Restart services with PM2
@@ -123,7 +123,7 @@ pm2 startup systemd -u root --hp /root 2>/dev/null | tail -1 | bash >/dev/null 2
 pm2 delete all 2>/dev/null || true
 
 cd /var/www/shoptiktok1/backend
-PORT=5000 pm2 start index.js --name backend --update-env
+PORT=8080 pm2 start index.js --name backend --update-env
 
 cd /var/www/shoptiktok1/frontend
 pm2 start unified-server.js --name frontend
@@ -243,3 +243,4 @@ Write-Host "   .\deploy.ps1" -ForegroundColor White
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
 Write-Host ""
+

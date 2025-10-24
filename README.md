@@ -68,7 +68,7 @@ cd ../frontend && npm install
 
 # Start backend
 cd backend
-PORT=5000 node index.js
+PORT=8080 node index.js
 
 # Start frontend (new terminal)
 cd frontend
